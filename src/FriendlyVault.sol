@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache2.0
-pragma solidity 0.8.13;
+pragma solidity ^0.8.20;
 
-import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
-import "@openzeppelin/contracts-upgradeable/contracts/utils/ReentrancyGuardUpgradeable.sol";
+import "@openzeppelinUpgredeable/contracts/proxy/utils/Initializable.sol";
+import "@openzeppelinUpgredeable/contracts/utils/ReentrancyGuardUpgradeable.sol";
 
 interface IERC20 {
   function transfer(address to, uint256 value) external returns (bool);
@@ -15,10 +15,10 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
   
   uint[32] public __gap; // sanity gap for future stateful base-contracts
   
-  address public constant DEF_MIN_LOST_CREDENTIALS_INACTIVITY_PERIOD = 10 weeks;
-  address public constant DEF_MIN_USERNAME_LEN = 4;
-  address public constant DEF_MAX_CORE_PER_USER = 4000e18;
-  address public constant DEF_FIXED_TX_GAS_FEE = 1e18/100;
+  uint public constant DEF_MIN_LOST_CREDENTIALS_INACTIVITY_PERIOD = 10 weeks;
+  uint public constant DEF_MIN_USERNAME_LEN = 4;
+  uint public constant DEF_MAX_CORE_PER_USER = 4000e18;
+  uint public constant DEF_FIXED_TX_GAS_FEE = 1e18/100;
   uint public constant DEF_SCAMMER_GAS_FACTOR_MILLICORE = 3*1000;
     
   address public constant CORE = address(0x11);
@@ -65,7 +65,7 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
 
   event SetMaxCorePerUser(uint oldMax, uint newMax);
 
-  event setTokenValueOracle(address indexed oldAddress, address indexed newAddress);
+  event SetTokenValueOracle(address indexed oldAddress, address indexed newAddress);
 
   event SetScammerDetectorOracle(address indexed oldAddress, address indexed newAddress);
 
@@ -173,7 +173,7 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
     emit VaultInitialized(_gov, _govDelegate, _defaultNumGasdrops);
   }
 
-  function registerUser(string username) external nonReentrant onlyGovDelegate {
+  function registerUser(string memory username) external nonReentrant onlyGovDelegate {
     _registerUser(username);
     emit RegisterNewUser(username);
   }
@@ -182,7 +182,7 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
     return s_tokenTypesInVault.length;
   }
 
-  function setScammerStatus(string username, bool newStatus) external onlyScammerDetectorOracle {
+  function setScammerStatus(string memory username, bool newStatus) external onlyScammerDetectorOracle {
     _requireValidUsername(username);
     _requireActiveUser(username);
     bool oldStatus = s_activeUsers[username].suspectedScammer;
@@ -190,7 +190,7 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
     emit SetScammerStatus(username, oldStatus, newStatus);
   }
 
-  function restrictUserForReceival(string username, bool restict) external nonReentrant onlyGovDelegate {
+  function restrictUserForReceival(string memory username, bool restict) external nonReentrant onlyGovDelegate {
     _requireValidUsername(username);
     _requireActiveUser(username);
     bool oldRestictMode = s_restrictedUsers[username];
@@ -243,7 +243,9 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
     emit SetScammerGasFactor(oldFactor, newFactorMilliCores);
   }    
 
-  function recoverLostCredentials(string originName, string lostUser, string recoveredUser, address[] memory tokens, GasParams gparams) public onlyGovDelegate {
+  function recoverLostCredentials(string memory originName, string memory lostUser, 
+                                  string memory recoveredUser, address[] memory tokens, 
+                                  GasParams memory gparams) public onlyGovDelegate {
     // called by GovDelegate after enough proof has been provided offchain that recoveredAccount is indeed owned by the orig user
     _requireValidUsername(lostUser);
     _requireValidUsername(recoveredUser);  
@@ -276,7 +278,7 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
     require(newAddress != address(0), "zero addr");
     address oldAddress = s_tokenValueOracle;
     s_tokenValueOracle = newAddress;
-    emit setTokenValueOracle(oldAddress, newAddress);
+    emit SetTokenValueOracle(oldAddress, newAddress);
   }
 
   function setScammerDetectorOracle(address newAddress) external onlyGovDelegate {
@@ -300,16 +302,15 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
     emit SetGovDelegate(oldDelegate, newDelegate);
   }
 
-  function getAllUserAssets(string username, address[] memory tokensToCheck) external view returns (address[] memory){
+  function getAllUserAssets(string memory username, address[] memory tokensToCheck) external view returns (uint[] memory){
     _requireValidUsername(username);
     _requireActiveUser(username);
-    _updateUserTimestamp(username);
     
     uint len = tokensToCheck.length;
-    
-    uint[len] memory _userBalances;
+    uint[] memory _userBalances = new uint[](len);
+
     for (uint i = 0; i < len; i++) {
-      uint _token = tokensToCheck[i];
+      address _token = tokensToCheck[i];
       require(_token != address(0), "bad token");
       uint _balance = s_balances[username][_token];
       _userBalances[i] = _balance; // possibly CORE
@@ -317,7 +318,7 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
     return _userBalances;
   }
 
-  function transferCoreFromVault(TxRecord r) public nonReentrant onlyGovDelegate {
+  function transferCoreFromVault(TxRecord memory r) public nonReentrant onlyGovDelegate {
     // transfer directions:
     //    vault => EOA
     //    vault => vault (=shortCircuit)
@@ -327,7 +328,7 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
     require(_validTokens(r.gparams.gasTokens), "invalid tokens");
 
     _requireValidUsername(r.fromName);
-    require(r.originName == r.fromName, "origin must be equal to from-name");
+    require(_eq(r.originName, r.fromName), "origin must be equal to from-name");
 
     _updateUserTimestamp(r.originName);
 
@@ -342,10 +343,10 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
     s_balances[r.fromName][CORE] -= r.amount;
 
     if (r.allowShortCircuit && _canTransferTo(r.toName)) {
-      s_balances[r.toName][CORE] += msg.value;
+      s_balances[r.toName][CORE] += r.amount;
       require(s_balances[r.toName][CORE] <= s_maxCorePerUser, "cannot exceed maxCorePerUser");
     } else if (r.toAddress != address(0)) {
-      _transferCoreOutOfVault(r.toAddress);
+      _transferCoreOutOfVault(r.toAddress, r.amount);
     } else {
       revert("cannot perform operation");
     }
@@ -354,7 +355,7 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
   }
 
 
-  function transferCoreFromExternalAddress(TxRecord r) public payable nonReentrant onlyGovDelegate {
+  function transferCoreFromExternalAddress(TxRecord memory r) public payable nonReentrant onlyGovDelegate {
     // EOA => vault
     require(r.token == address(0), "cannot pass token to this function");
     require(r.amount == 0, "Core amount should be taken from msg.value");
@@ -376,7 +377,7 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
   }
 
 
-  function transferToken(TxRecord r) public nonReentrant onlyGovDelegate {
+  function transferToken(TxRecord memory r) public nonReentrant onlyGovDelegate {
     // transfer directions:
     //    EOA => vault
     //    vault => EOA
@@ -390,7 +391,7 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
     bool tokensOutsideOfVault = _isEmpty(r.fromName) && r.fromAddress != address(0);
 
     if (tokensOutsideOfVault) {
-      _transferTokensFromExternalAddressIntoVault();
+      _transferTokensFromExternalAddressIntoVault(r);
     } else {
       _transferTokensFromWithinVault(r);
     }
@@ -400,7 +401,7 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
   }
 
 
-  function performBatchOperations(string originName, BatchOperation[] memory ops, GasParams gparams) external onlyGovDelegate { // nonReentrant will result in revert here
+  function performBatchOperations(string memory originName, BatchOperation[] memory ops, GasParams memory gparams) external onlyGovDelegate { // nonReentrant will result in revert here
     if (ops.length == 0) {
       return;
     }
@@ -424,10 +425,10 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
 
 
 
-  function _transferTokensFromWithinVault(TxRecord r) private {
+  function _transferTokensFromWithinVault(TxRecord memory r) private {
     // transfer token fron within the vault contract - either shortCircuit inside or transfer to an external address
     _requireValidUsername(r.fromName);
-    require(r.originName == r.fromName, "origin <> from");
+    require(_eq(r.originName,r.fromName), "origin <> from");
     require(r.fromAddress == address(0), "fromAddress cannot be used");
 
     s_balances[r.fromName][r.token] -= r.amount;
@@ -441,13 +442,13 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
     }
   }
 
-  function _payGasFee(int numTx, string originName, GasParams gparams) private {
+  function _payGasFee(uint numTx, string memory originName, GasParams memory gparams) private {
     // gas fees must be all in-vault
     if (s_disableGasPayments) {
       return;
     }
 
-    string payer = originName; // only origin pays gas
+    string memory payer = originName; // only origin pays gas
     _requireValidUsername(payer);
     _requireActiveUser(payer);
 
@@ -474,7 +475,7 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
     gasToPay -= paid;
 
     if (gasToPay == 0) {
-      return 0;
+      return;
     }
 
     bool alreadyPaidWithCore = gparams.gasPaymentStartsWithCore;
@@ -493,15 +494,15 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
   }
 
 
-  function _payGasWithCore(uint gasToPay, string _payer) private {
+  function _payGasWithCore(uint gasToPay, string memory _payer) private returns(uint) {
     // pay with in-vault Core
     uint paidInCore = _min(s_balances[_payer][CORE], gasToPay);
-    s_balances[payer][CORE] -= paidInCore;
+    s_balances[_payer][CORE] -= paidInCore;
     s_balances[GAS_FEE_ACCOUNT][CORE] += paidInCore;
     return paidInCore;
   }
 
-  function _payGasWithTokens(uint gasToPay, strnig payer, GasParams gparams) private {
+  function _payGasWithTokens(uint gasToPay, string memory payer, GasParams memory gparams) private returns(uint) {
     // pay with in-vault token
     uint totalPaidSofar = 0;
 
@@ -518,7 +519,7 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
   }
 
 
-  function _payGasWithSingleToken(string _payer, address _token, uint gasLeftToPay) private {
+  function _payGasWithSingleToken(string memory _payer, address _token, uint gasLeftToPay) private returns(uint) {  
     _requireValidToken(_token);
     uint userTokenBalance = s_balances[_payer][_token];
     if (userTokenBalance == 0) { 
@@ -548,17 +549,21 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
     return paidInCoreNow; 
   }
 
-  function _requireValidUsername(string username) private pure {
+  function _requireValidUsername(string memory username) private view{
     if (!_validUsername(username)) {
       revert InvalidUsername(username);
     }
   }
 
-  function _validUsername(string username) private pure returns(bool) {
+  function _validUsername(string memory username) private view returns(bool) {
     return bytes(username).length >= s_minUsernameLength;
   }
 
-  function _transferCoreOutOfVault(address _toAddress) private {
+  function _isEmpty(string memory s) private pure returns(bool) {
+    return bytes(s).length == 0;
+  }
+
+  function _transferCoreOutOfVault(address _toAddress, uint _amount) private {
     require(address(this).balance >= _amount, "not enough Core in vault");
     (bool ok,) = payable(_toAddress).call{ value: msg.value }("");
     require(ok, "Core transfer failed");
@@ -589,14 +594,14 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
     emit TokenRemovedFromInVaultArray(_token);
   }
 
-  function _registerUser(string username) private {
+  function _registerUser(string memory username) private {
     _requireValidUsername(username);
     require(s_activeUsers[username].lastActiveTime == 0, "user already registered");
     uint _now = block.timestamp;
-    s_activeUsers[username] = VaultUser({lastActiveTime: _now, numGasdropsLeft: s_numGasdropsForNewcomers});
+    s_activeUsers[username] = VaultUser({lastActiveTime: _now, numGasdropsLeft: s_numGasdropsForNewcomers, suspectedScammer: false});
   }
 
-  function _transferTokensFromExternalAddressIntoVault() private {
+  function _transferTokensFromExternalAddressIntoVault(TxRecord memory r) private {
     require(!_isEmpty(r.toName) && _canTransferTo(r.toName), "cannot transfer to toName");
 
     s_balances[r.toName][r.token] += r.amount;
@@ -635,21 +640,21 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
     return token != address(0) && token != CORE;
   }
 
-  function _canTransferTo(string username) private view returns(bool) {
+  function _canTransferTo(string memory username) private view returns(bool) {
     return _validUsername(username) && _isActiveUser(username) && !s_restrictedUsers[username];
   }
 
-  function _requireActiveUser(string username) private view {
+  function _requireActiveUser(string memory username) private view {
     if (!_isActiveUser(username)) {
       revert InactiveUser(username);
     }
   }
 
-  function _isActiveUser(string username) private view returns(bool) {
+  function _isActiveUser(string memory username) private view returns(bool) {
     return s_activeUsers[username].lastActiveTime > 0;
   }
 
-  function _updateUserTimestamp(string _username) private {
+  function _updateUserTimestamp(string memory _username) private {
     require(_isActiveUser(_username), "not a user");
     uint _now = block.timestamp;
     s_activeUsers[_username].lastActiveTime = _now;
@@ -657,6 +662,10 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
 
   function _min(uint a, uint b) private pure returns(uint) {
     return a < b ? a : b;
+  }
+
+  function _eq(string memory str1, string memory str2) private pure returns(bool) {
+    return keccak256(abi.encodePacked(str1)) == keccak256(abi.encodePacked(str2));
   }
 }
 
