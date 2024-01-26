@@ -682,12 +682,3 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
     return keccak256(abi.encodePacked(str1)) == keccak256(abi.encodePacked(str2));
   }
 }
-
-
-//   zzzz limit num Cores per account
-//   zzzz gas payments > can only be applied to origin!;
-//   zzzz auto-airDrop =='GasDrop' mode;
-//   zzz make upgradble;
-//   zzz fixed gas per Tx; maybe 3-times for suspected scammer;
-//   zzzz add suspectedScammer list gov-populated (AI engine);
-// ---
