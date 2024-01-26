@@ -15,7 +15,7 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
   
   uint[32] public __gap; // sanity gap for future stateful base-contracts
   
-  uint public constant DEF_MIN_LOST_CREDENTIALS_INACTIVITY_PERIOD = 10 weeks;
+  uint public constant DEF_LOST_CREDENTIALS_MIN_INACTIVITY_PERIOD = 10 weeks;
   uint public constant DEF_MIN_USERNAME_LEN = 4;
   uint public constant DEF_MAX_CORE_PER_USER = 4000e18;
   uint public constant DEF_FIXED_TX_GAS_FEE = 1e18/100;
@@ -29,15 +29,15 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
 
   uint public g_scammersGasFactorMilliCores = DEF_SCAMMER_GAS_FACTOR_MILLICORE;
   uint public s_fixedTxGasFee = DEF_FIXED_TX_GAS_FEE;
-  uint public s_lostCredentialsInactivityPeriod = DEF_MIN_LOST_CREDENTIALS_INACTIVITY_PERIOD;
+  uint public s_lostCredentialsInactivityPeriod = DEF_LOST_CREDENTIALS_MIN_INACTIVITY_PERIOD;
   uint public s_maxCorePerUser = DEF_MAX_CORE_PER_USER;
   uint public s_minUsernameLength = DEF_MIN_USERNAME_LEN;
-  bool private s_disableGasPayments = false;
 
   uint public s_numGasdropsForNewcomers; // assigned to each new user
   address public s_govDelegate;
   address public s_tokenValueOracle;
   address public s_scammerDetectorOracle;
+  bool private s_disableGasPayments = false;
   
   mapping(string => mapping(address => uint)) public s_balances; // CORE included!
   mapping(string => VaultUser) public s_activeUsers;
@@ -97,7 +97,7 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
 
   error InvalidToken(address token);
   
-  error InactiveUser(string username);
+  error NotAnActiveUser(string username);
   
   error InvalidUsername(string username);
 
@@ -527,11 +527,7 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
       return 0;
     }
 
-    uint tokenValueInCore = s_tokenToCoreValues[_token];
-    if (tokenValueInCore == 0) {
-      revert CoreValueNotSetForToken(_token);
-    }
-
+    uint tokenValueInCore = _getTokenValueInCore(_token);
     uint userTokenBalanceInCore = userTokenBalance * tokenValueInCore;
 
     uint paidInTokensNow;
@@ -550,6 +546,33 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
     return paidInCoreNow; 
   }
 
+  function _getTokenValueInCore(address _token) private view returns(uint) {
+    uint tokenValueInCore = s_tokenToCoreValues[_token];
+    if (tokenValueInCore == 0) {
+      revert CoreValueNotSetForToken(_token);
+    }
+    return tokenValueInCore;
+  }
+
+  function _requireUserNotAlreadyRegistered(string memory username) private view {
+    uint _lastActiveTime = s_activeUsers[username].lastActiveTime;
+    if (_lastActiveTime > 0) {
+      revert UserAlreadyRegistered(username, _lastActiveTime);
+    }
+  }
+
+  function _requireValidToken(address _token) private pure {
+    if (!_validToken(_token)) {
+      revert InvalidToken(_token);
+    }
+  }
+  
+  function _requireActiveUser(string memory username) private view {
+    if (!_isActiveUser(username)) {
+      revert NotAnActiveUser(username);
+    }
+  }
+
   function _requireValidUsername(string memory username) private view{
     if (!_validUsername(username)) {
       revert InvalidUsername(username);
@@ -566,7 +589,7 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
 
   function _transferCoreOutOfVault(address _toAddress, uint _amount) private {
     require(address(this).balance >= _amount, "not enough Core in vault");
-    (bool ok,) = payable(_toAddress).call{ value: msg.value }("");
+    (bool ok,) = payable(_toAddress).call{ value: _amount }("");
     require(ok, "Core transfer failed");
   }
 
@@ -597,12 +620,11 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
 
   function _registerUser(string memory username) private {
     _requireValidUsername(username);
-    uint _lastActiveTime = s_activeUsers[username].lastActiveTime;
-    if (_lastActiveTime > 0) {
-      revert UserAlreadyRegistered(username, _lastActiveTime);
-    }
+    _requireUserNotAlreadyRegistered(username);
     uint _now = block.timestamp;
-    s_activeUsers[username] = VaultUser({lastActiveTime: _now, numGasdropsLeft: s_numGasdropsForNewcomers, suspectedScammer: false});
+    s_activeUsers[username] = VaultUser({lastActiveTime: _now, 
+                                          numGasdropsLeft: s_numGasdropsForNewcomers, 
+                                          suspectedScammer: false });
   }
 
   function _transferTokensFromExternalAddressIntoVault(TxRecord memory r) private {
@@ -618,7 +640,7 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
     address _owner = r.fromAddress;
     address _spender = address(this);
     uint _allowance = _token.allowance(_owner, _spender);
-    require(_allowance >= r.amount, "valut should have an allowance of >= amount");
+    require(_allowance >= r.amount, "vault should have an allowance of >= amount");
 
     bool ok = _token.transferFrom(r.fromAddress, address(this), r.amount);
     require(ok, "token transfer failed");
@@ -634,24 +656,12 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
     return true;
   }
 
-  function _requireValidToken(address _token) private pure {
-    if (!_validToken(_token)) {
-      revert InvalidToken(_token);
-    }
-  }
-
   function _validToken(address token) private pure returns(bool) {
     return token != address(0) && token != CORE;
   }
 
   function _canTransferTo(string memory username) private view returns(bool) {
     return _validUsername(username) && _isActiveUser(username) && !s_restrictedUsers[username];
-  }
-
-  function _requireActiveUser(string memory username) private view {
-    if (!_isActiveUser(username)) {
-      revert InactiveUser(username);
-    }
   }
 
   function _isActiveUser(string memory username) private view returns(bool) {
