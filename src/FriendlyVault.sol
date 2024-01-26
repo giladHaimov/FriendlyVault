@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache2.0
 pragma solidity ^0.8.20;
 
-import "@openzeppelinUpgredeable/contracts/proxy/utils/Initializable.sol";
-import "@openzeppelinUpgredeable/contracts/utils/ReentrancyGuardUpgradeable.sol";
+import "@oz_upgredeable/contracts/proxy/utils/Initializable.sol";
+import "@oz_upgredeable/contracts/utils/ReentrancyGuardUpgradeable.sol";
 
 interface IERC20 {
   function transfer(address to, uint256 value) external returns (bool);
@@ -19,8 +19,8 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
   uint public constant DEF_MIN_USERNAME_LEN = 4;
   uint public constant DEF_MAX_CORE_PER_USER = 4000e18;
   uint public constant DEF_FIXED_TX_GAS_FEE = 1e18/100;
-  uint public constant DEF_SCAMMER_GAS_FACTOR_MILLICORE = 3*1000;
-    
+  uint public constant DEF_SCAMMER_GAS_FACTOR_MILLICORE = 3*1000;  
+
   address public constant CORE = address(0x11);
 
   string public constant GAS_FEE_ACCOUNT = "gas_fee_account"; 
@@ -93,15 +93,16 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
   //------------
 
 
-  error CoreValueNotAssignedToToken(address token);
+  error CoreValueNotSetForToken(address token);
 
   error InvalidToken(address token);
   
   error InactiveUser(string username);
   
   error InvalidUsername(string username);
-  //------------
 
+  error UserAlreadyRegistered(string username, uint lastActiveTime);
+  //------------
 
 
   struct GasParams {
@@ -332,7 +333,7 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
 
     _updateUserTimestamp(r.originName);
 
-    require(!_isEmpty(r.fromName), "fromName must be passed");
+    require(_validUsername(r.fromName), "fromName must be passed");
     require(r.fromAddress == address(0), "this operation cannot use fromAddress");
 
     // transfer token fron within contract - either shortCircuit inside or transfer to an external address (or both)
@@ -367,7 +368,7 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
     require(_isEmpty(r.fromName), "fromName cannot be used");
     require(r.fromAddress != address(0), "this operation requires fromAddress");
 
-    require(!_isEmpty(r.toName) && _canTransferTo(r.toName), "cannot transfer Core to toName");
+    require(_validUsername(r.toName) && _canTransferTo(r.toName), "cannot transfer Core to toName");
 
     s_balances[r.toName][CORE] += msg.value;
     require(s_balances[r.toName][CORE] <= s_maxCorePerUser, "cannot exceed maxCorePerUser");
@@ -528,7 +529,7 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
 
     uint tokenValueInCore = s_tokenToCoreValues[_token];
     if (tokenValueInCore == 0) {
-      revert CoreValueNotAssignedToToken(_token);
+      revert CoreValueNotSetForToken(_token);
     }
 
     uint userTokenBalanceInCore = userTokenBalance * tokenValueInCore;
@@ -596,13 +597,16 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
 
   function _registerUser(string memory username) private {
     _requireValidUsername(username);
-    require(s_activeUsers[username].lastActiveTime == 0, "user already registered");
+    uint _lastActiveTime = s_activeUsers[username].lastActiveTime;
+    if (_lastActiveTime > 0) {
+      revert UserAlreadyRegistered(username, _lastActiveTime);
+    }
     uint _now = block.timestamp;
     s_activeUsers[username] = VaultUser({lastActiveTime: _now, numGasdropsLeft: s_numGasdropsForNewcomers, suspectedScammer: false});
   }
 
   function _transferTokensFromExternalAddressIntoVault(TxRecord memory r) private {
-    require(!_isEmpty(r.toName) && _canTransferTo(r.toName), "cannot transfer to toName");
+    require(_validUsername(r.toName) && _canTransferTo(r.toName), "cannot transfer to toName");
 
     s_balances[r.toName][r.token] += r.amount;
     if (s_tokenTotals[r.token] == 0) {

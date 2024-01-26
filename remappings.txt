@@ -1,1 +1,1 @@
-@openzeppelinUpgredeable/=lib/openzeppelin-contracts-upgradeable
+@oz_upgredeable/=lib/openzeppelin-contracts-upgradeable
