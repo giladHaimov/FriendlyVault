@@ -54,13 +54,13 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
   uint public s_numGasdropsForNewcomers; // assigned to each new user
   address public s_govDelegate;
   address public s_tokenValueOracle;
-  address public s_scammerDetectorOracle;
+  address public s_scamDetectorOracle;
   bool private s_disableGasPayments = false;
   
 
   mapping(string => mapping(address => uint)) public s_balances; // CORE included!
 
-  mapping(string => mapping(string => uint)) public s_gasTxAllowance; // in number of Tx
+  mapping(string => mapping(string => uint)) public s_delegatedGasPaymentAllowance; // in number of Tx
 
   mapping(string => VaultUser) public s_activeUsers;
   
@@ -92,11 +92,11 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
 
   event SetTokenValueOracle(address indexed oldAddress, address indexed newAddress);
 
-  event SetScammerDetectorOracle(address indexed oldAddress, address indexed newAddress);
+  event SetScamDetectorOracle(address indexed oldAddress, address indexed newAddress);
 
   event SetMinLostCredentialsInactivityPeriod(uint oldMin, uint newMin);
 
-  event SetScammerStatus(string indexed username, bool oldSuspectedScammer, bool newSuspectedScammer);
+  event SetScammerStatusForUser(string indexed username, bool oldSuspectedScammer, bool newSuspectedScammer);
 
   event SetFixedTxGasFee(uint oldFee, uint newFee);
 
@@ -106,7 +106,7 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
 
   event SetTokenValueInCores(address indexed token, uint oldVal, uint newVal);
 
-  event SetGasTxAllowance(string indexed gasPayerDelegate, string indexed originName, uint oldTxAllowance, uint newTxAllowance);
+  event SetDelegatedGasPaymentAllowance(string indexed gasPayerDelegate, string indexed originName, uint oldTxAllowance, uint newTxAllowance);
 
   event SetGovDelegate(address indexed oldDelegate, address indexed newDelegate);
 
@@ -180,8 +180,8 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
     _;
   }  
 
-  modifier onlyScammerDetectorOracle() {
-    require(msg.sender == s_scammerDetectorOracle, "not scammer detector oracle");
+  modifier onlyScamDetectorOracle() {
+    require(msg.sender == s_scamDetectorOracle, "not scam-detector oracle");
     _;
   }    
   //------------
@@ -202,7 +202,7 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
     emit VaultInitialized(_gov, _govDelegate, _defaultNumGasdrops);
   }
 
-  function registerUser(string memory username) external nonReentrant onlyGovDelegate {
+  function registerUser(string memory username) external onlyGovDelegate {
     _registerUser(username);
     emit RegisterNewUser(username);
   }
@@ -211,15 +211,15 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
     return s_tokenTypesInVault.length;
   }
 
-  function setScammerStatus(string memory username, bool newStatus) external onlyScammerDetectorOracle {
+  function setScammerStatusForUser(string memory username, bool newStatus) external onlyScamDetectorOracle {
     _requireValidUsername(username);
     _requireActiveUser(username);
     bool oldStatus = s_activeUsers[username].suspectedScammer;
     s_activeUsers[username].suspectedScammer = newStatus;
-    emit SetScammerStatus(username, oldStatus, newStatus);
+    emit SetScammerStatusForUser(username, oldStatus, newStatus);
   }
 
-  function restrictUserForReceival(string memory username, bool restict) external nonReentrant onlyGovDelegate {
+  function restrictUserForReceival(string memory username, bool restict) external onlyGovDelegate {
     _requireValidUsername(username);
     _requireActiveUser(username);
     bool oldRestictMode = s_restrictedUsers[username];
@@ -253,18 +253,17 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
     emit SetTokenValueInCores(token, oldVal, newVal);
   }  
 
-  function setGasTxAllowance(string memory gasPayerDelegate, string memory originName, uint newTxAllowance) external onlyGovDelegate {
+  function setDelegatedGasPaymentAllowance(string memory gasPayerDelegate, string memory originName, uint newTxAllowance) external onlyGovDelegate {
     _requireValidUsername(gasPayerDelegate);
     _requireActiveUser(gasPayerDelegate);
     _requireValidUsername(originName);
     _requireActiveUser(originName);
 
-    uint oldTxAllowance = s_gasTxAllowance[gasPayerDelegate][originName];
-    s_gasTxAllowance[gasPayerDelegate][originName] = newTxAllowance;
-    emit SetGasTxAllowance(gasPayerDelegate, originName, oldTxAllowance, newTxAllowance);
+    uint oldTxAllowance = s_delegatedGasPaymentAllowance[gasPayerDelegate][originName];
+    s_delegatedGasPaymentAllowance[gasPayerDelegate][originName] = newTxAllowance;
+    emit SetDelegatedGasPaymentAllowance(gasPayerDelegate, originName, oldTxAllowance, newTxAllowance);
   }  
   
-
   function setMinLostCredentialsInactivityPeriod(uint newMin) external onlyGovDelegate {
     uint oldMin = s_lostCredentialsInactivityPeriod;
     s_lostCredentialsInactivityPeriod = newMin;
@@ -286,7 +285,7 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
 
   function recoverLostCredentials(string memory originName, string memory lostUser, 
                                   string memory recoveredUser, address[] memory tokens, 
-                                  GasParams memory gparams) public onlyGovDelegate {
+                                  GasParams memory gparams) external onlyGovDelegate {
     // called by GovDelegate after enough proof has been provided offchain that recoveredAccount is indeed owned by the orig user
     _requireValidUsername(lostUser);
     _requireValidUsername(recoveredUser);  
@@ -322,11 +321,11 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
     emit SetTokenValueOracle(oldAddress, newAddress);
   }
 
-  function setScammerDetectorOracle(address newAddress) external onlyGovDelegate {
+  function setScamDetectorOracle(address newAddress) external onlyGovDelegate {
     require(newAddress != address(0), "zero addr");
-    address oldAddress = s_scammerDetectorOracle;
-    s_scammerDetectorOracle = newAddress;
-    emit SetScammerDetectorOracle(oldAddress, newAddress);
+    address oldAddress = s_scamDetectorOracle;
+    s_scamDetectorOracle = newAddress;
+    emit SetScamDetectorOracle(oldAddress, newAddress);
   }
 
   function removeFromTokenTypesInVaultArray(address[] memory _tokens) external onlyGovDelegate {
@@ -396,7 +395,7 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
   }
 
 
-  function transferCoreFromExternalAddress(TxRecord memory r) public payable nonReentrant onlyGovDelegate {
+  function transferCoreFromExternalAddress(TxRecord memory r) public payable onlyGovDelegate {
     // EOA => vault
     require(r.token == address(0), "cannot pass token to this function");
     require(r.amount == 0, "Core amount should be taken from msg.value");
@@ -499,9 +498,9 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
 
     string memory payer; 
 
-    bool delegatedGasPayer = !_eq(originName, gparams.gasPayerDelegate);
+    bool delegatedGasPayment = !_eq(originName, gparams.gasPayerDelegate);
 
-    if (delegatedGasPayer) {
+    if (delegatedGasPayment) {
       _subtractFromGasTxAllowance(originName, gparams.gasPayerDelegate, numTx);
       payer = gparams.gasPayerDelegate;
     } else {
@@ -520,13 +519,13 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
     if (s_activeUsers[payer].suspectedScammer) {
       gasToPay = (gasToPay * g_scammersGasFactorMilliCores)/1000;
     }
-    uint paid;
 
+    uint paid;
     if (gparams.gasPaymentStartsWithCore) {
-      paid = _payGasWithCore(gasToPay, payer);
+      paid = _payGasWithCore(payer, gasToPay);
     } else {
       // start with tokens
-      paid = _payGasWithTokens(gasToPay, payer, gparams);
+      paid = _payGasWithTokens(payer, gasToPay, gparams);
     }
     gasToPay -= paid;
 
@@ -539,10 +538,10 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
     // use the 'other' to pay the rest
     if (alreadyPaidWithCore) {
       // pay the rest with tokens
-      paid = _payGasWithTokens(gasToPay, payer, gparams);
+      paid = _payGasWithTokens(payer, gasToPay, gparams);
     } else {
       // pay the rest with Core
-      paid = _payGasWithCore(gasToPay, payer);
+      paid = _payGasWithCore(payer, gasToPay);
     }
     gasToPay -= paid;
 
@@ -550,11 +549,11 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
   }
 
   function _subtractFromGasTxAllowance(string memory originName, string memory gasDelegate, uint numTx) private {
-    require(s_gasTxAllowance[gasDelegate][originName] >= numTx, "No gas allowance for origin");
-    s_gasTxAllowance[gasDelegate][originName] -= numTx; // subtract allowed-Tx counter
+    require(s_delegatedGasPaymentAllowance[gasDelegate][originName] >= numTx, "No gas allowance for origin");
+    s_delegatedGasPaymentAllowance[gasDelegate][originName] -= numTx;
   }
 
-  function _payGasWithCore(uint gasToPay, string memory _payer) private returns(uint) {
+  function _payGasWithCore(string memory _payer, uint gasToPay) private returns(uint) {
     // pay with in-vault Core
     uint paidInCore = _min(s_balances[_payer][CORE], gasToPay);
     s_balances[_payer][CORE] -= paidInCore;
@@ -562,7 +561,7 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
     return paidInCore;
   }
 
-  function _payGasWithTokens(uint gasToPay, string memory payer, GasParams memory gparams) private returns(uint) {
+  function _payGasWithTokens(string memory payer, uint gasToPay, GasParams memory gparams) private returns(uint) {
     // pay with in-vault token
     uint totalPaidSofar = 0;
 
@@ -579,7 +578,7 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
   }
 
 
-  function _payGasWithSingleToken(string memory _payer, address _token, uint gasLeftToPay) private returns(uint) {  
+  function _payGasWithSingleToken(string memory _payer, address _token, uint toPayInCore) private returns(uint) {  
     _requireValidToken(_token);
     uint userTokenBalance = s_balances[_payer][_token];
     if (userTokenBalance == 0) { 
@@ -591,9 +590,9 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
 
     uint paidInTokensNow;
     uint paidInCoreNow;
-    if (userTokenBalanceInCore >= gasLeftToPay) {
-      paidInCoreNow = gasLeftToPay;
-      paidInTokensNow = gasLeftToPay / tokenValueInCore;
+    if (userTokenBalanceInCore >= toPayInCore) {
+      paidInCoreNow = toPayInCore;
+      paidInTokensNow = toPayInCore / tokenValueInCore;
     } else {
       paidInCoreNow = userTokenBalanceInCore;
       paidInTokensNow = userTokenBalance;
