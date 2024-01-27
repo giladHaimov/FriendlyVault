@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache2.0
 pragma solidity ^0.8.20;
 
-import "@oz_upgredeable/contracts/proxy/utils/Initializable.sol";
-import "@oz_upgredeable/contracts/utils/ReentrancyGuardUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 
 //zzz how upgradeable
 
