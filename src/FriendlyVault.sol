@@ -4,6 +4,8 @@ pragma solidity ^0.8.20;
 import "@oz_upgredeable/contracts/proxy/utils/Initializable.sol";
 import "@oz_upgredeable/contracts/utils/ReentrancyGuardUpgradeable.sol";
 
+//zzz how upgradeable
+
 /*  zzzzz readme + comments
 
 - Allow address-less users to interact with the blockchain - no private keys, no mnemonics storage
@@ -38,24 +40,23 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
   uint public constant DEF_MAX_CORE_PER_USER = 4000e18;
   uint public constant DEF_FIXED_TX_GAS_FEE = 1e18/100;
   uint public constant DEF_SCAMMER_GAS_FACTOR_MILLICORE = 3*1000;  
-
+  
   address public constant CORE = address(0x11);
-
   string public constant GAS_FEE_ACCOUNT = "gas_fee_account"; 
 
   address public s_governance; // GOV_HUB = 0x0000000000000000000000000000000000001006;
 
-  uint public g_scammersGasFactorMilliCores = DEF_SCAMMER_GAS_FACTOR_MILLICORE;
-  uint public s_fixedTxGasFee = DEF_FIXED_TX_GAS_FEE;
-  uint public s_lostCredentialsInactivityPeriod = DEF_LOST_CREDENTIALS_MIN_INACTIVITY_PERIOD;
-  uint public s_maxCorePerUser = DEF_MAX_CORE_PER_USER;
-  uint public s_minUsernameLength = DEF_MIN_USERNAME_LEN;
+  uint public g_scammersGasFactorMilliCores;
+  uint public s_fixedTxGasFee;
+  uint public s_lostCredentialsInactivityPeriod;
+  uint public s_maxCorePerUser;
+  uint public s_minUsernameLength;
 
   uint public s_numGasdropsForNewcomers; // assigned to each new user
   address public s_govDelegate;
   address public s_tokenValueOracle;
   address public s_scamDetectorOracle;
-  bool private s_disableGasPayments = false;
+  bool private s_disableGasPayments;
   
 
   mapping(string => mapping(address => uint)) public s_balances; // CORE included!
@@ -155,7 +156,7 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
   struct VaultUser {
     uint lastActiveTime;
     uint numGasdropsLeft;
-    bool suspectedScammer;
+    bool isSuspectedScammer;
   }
 
   struct BatchOperation {
@@ -191,10 +192,25 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
     revert("cannot pass Core to vault without specifying destination"); 
   }
 
+  //constructor() -- cannot declare; upgradeable contract 
+
+
+  /// @custom:oz-upgrades-unsafe-allow constructor
+  constructor() {//zzzzz???
+    _disableInitializers();
+  }
+
   function initialize(address _gov, address _govDelegate, uint _defaultNumGasdrops) external initializer {
     __ReentrancyGuard_init();
     require(_gov != address(0), "missing governance addr");
     require(_govDelegate != address(0), "missing govDelegate addr");
+
+    g_scammersGasFactorMilliCores = DEF_SCAMMER_GAS_FACTOR_MILLICORE;
+    s_fixedTxGasFee = DEF_FIXED_TX_GAS_FEE;
+    s_lostCredentialsInactivityPeriod = DEF_LOST_CREDENTIALS_MIN_INACTIVITY_PERIOD;
+    s_maxCorePerUser = DEF_MAX_CORE_PER_USER;
+    s_minUsernameLength = DEF_MIN_USERNAME_LEN;
+
     s_governance = _gov;
     s_govDelegate = _govDelegate;
     s_numGasdropsForNewcomers = _defaultNumGasdrops;
@@ -214,8 +230,8 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
   function setScammerStatusForUser(string memory username, bool newStatus) external onlyScamDetectorOracle {
     _requireValidUsername(username);
     _requireActiveUser(username);
-    bool oldStatus = s_activeUsers[username].suspectedScammer;
-    s_activeUsers[username].suspectedScammer = newStatus;
+    bool oldStatus = s_activeUsers[username].isSuspectedScammer;
+    s_activeUsers[username].isSuspectedScammer = newStatus;
     emit SetScammerStatusForUser(username, oldStatus, newStatus);
   }
 
@@ -501,7 +517,7 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
     bool delegatedGasPayment = !_eq(originName, gparams.gasPayerDelegate);
 
     if (delegatedGasPayment) {
-      _subtractFromGasTxAllowance(originName, gparams.gasPayerDelegate, numTx);
+      _subtractFromGasTxAllowance(gparams.gasPayerDelegate, originName, numTx);
       payer = gparams.gasPayerDelegate;
     } else {
       payer = originName;  // no delegation; origin pays
@@ -516,7 +532,7 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
     }
 
     uint gasToPay = numTx * s_fixedTxGasFee; 
-    if (s_activeUsers[payer].suspectedScammer) {
+    if (s_activeUsers[payer].isSuspectedScammer) {
       gasToPay = (gasToPay * g_scammersGasFactorMilliCores)/1000;
     }
 
@@ -548,7 +564,7 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
     require(gasToPay == 0, "payer failed to pay gas fees");
   }
 
-  function _subtractFromGasTxAllowance(string memory originName, string memory gasDelegate, uint numTx) private {
+  function _subtractFromGasTxAllowance(string memory gasDelegate, string memory originName, uint numTx) private {
     require(s_delegatedGasPaymentAllowance[gasDelegate][originName] >= numTx, "No gas allowance for origin");
     s_delegatedGasPaymentAllowance[gasDelegate][originName] -= numTx;
   }
@@ -682,7 +698,7 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
     uint _now = block.timestamp;
     s_activeUsers[username] = VaultUser({lastActiveTime: _now, 
                                           numGasdropsLeft: s_numGasdropsForNewcomers, 
-                                          suspectedScammer: false });
+                                          isSuspectedScammer: false });
   }
 
   function _transferTokensFromExternalAddressIntoVault(TxRecord memory r) private {

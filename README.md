@@ -67,3 +67,14 @@ The code includes mechanisms for oracles to provide external information like to
 It utilizes a "gas fee account" to hold fees collected for future use.
 
 
+### Governance and Security
+
+[See: https://github.com/OpenZeppelin/openzeppelin-foundry-upgrades]
+
+
+-   Execute:
+
+'''
+forge install OpenZeppelin/openzeppelin-foundry-upgrades
+forge install OpenZeppelin/openzeppelin-contracts-upgradeable
+'''
