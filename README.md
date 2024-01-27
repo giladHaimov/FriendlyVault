@@ -1,66 +1,69 @@
-## Foundry
+## FriendlyVault
 
-**Foundry is a blazing fast, portable and modular toolkit for Ethereum application development written in Rust.**
+**A lightweight-ERC4337 implementation relying on protocol-level account management.**
 
-Foundry consists of:
 
--   **Forge**: Ethereum testing framework (like Truffle, Hardhat and DappTools).
--   **Cast**: Swiss army knife for interacting with EVM smart contracts, sending transactions and getting chain data.
--   **Anvil**: Local Ethereum node, akin to Ganache, Hardhat Network.
--   **Chisel**: Fast, utilitarian, and verbose solidity REPL.
+### Purpose
 
-## Documentation
+This Solidity code implements a smart contract called "FriendlyVault" that acts as a secure storage and transfer system for digital assets (tokens and Core, a native cryptocurrency).
+It's designed to facilitate trustless transactions between users within a decentralized application (dApp).
+Key Features:
 
-https://book.getfoundry.sh/
 
-## Usage
+## Implementation
 
-### Build
 
-```shell
-$ forge build
-```
+### User Management
 
-### Test
+-   Registers users with unique usernames.
+-   Tracks user activity and timestamps.
+-   Allows for recovery of lost credentials under certain conditions.
+-   Can restrict users from receiving assets for compliance purposes.
 
-```shell
-$ forge test
-```
+### Asset Storage
 
-### Format
+-   Stores balances of Core and various tokens for each user
+-   Maintains a list of supported token types
 
-```shell
-$ forge fmt
-```
+### Token Transfers
 
-### Gas Snapshots
+-   Enables secure transfer of Core and tokens between users within the vault
+-   Supports transfers from external addresses into the vault
 
-```shell
-$ forge snapshot
-```
 
-### Anvil
+### Gas Payment System
 
-```shell
-$ anvil
-```
+-   Charges gas fees for transactions to cover computational costs
+-   Accepts payment in Core or supported tokens
+-   Adjusts gas costs based on user reputation and suspected scammer status
 
-### Deploy
 
-```shell
-$ forge script script/Counter.s.sol:CounterScript --rpc-url <your_rpc_url> --private-key <your_private_key>
-```
+### Batch Operations
 
-### Cast
+-   **Allows execution of multiple transactions in a single call for efficiency.**
 
-```shell
-$ cast <subcommand>
-```
 
-### Help
+### Important Functions
 
-```shell
-$ forge --help
-$ anvil --help
-$ cast --help
-```
+-   **registerUser**: Registers a new user with a username.
+-   **transferCoreFromVault**: Transfers Core from one user to another or to an external address.
+-   **transferCoreFromExternalAddress**: Transfers Core from an external address into a user's vault.
+-   **transferToken**: Transfers tokens between users or to external addresses.
+-   **performBatchOperations**: Executes multiple transactions in a single call.
+-   **setTokenValueInCores**: Sets the value of a token in terms of Core, used for gas fee calculations.
+-   **setGasFactor**: Adjusts the gas fee multiplier for suspected scammers.
+-   **setMaxCorePerUser**: Sets a maximum Core balance allowed per user.
+-   **setMinUsernameLength**: Sets the minimum length for usernames.
+-   **setNumGasdropsForNewcomers**: Provides new users with free gasdrops for initial transactions.
+
+
+### Governance and Security
+
+Certain functions can only be called by designated governance or delegate addresses, ensuring controlled updates and operations.
+Employs reentrancy guards to prevent potential vulnerabilities.
+Additional Notes:
+
+The code includes mechanisms for oracles to provide external information like token values and scammer detection, enhancing its functionality.
+It utilizes a "gas fee account" to hold fees collected for future use.
+
+

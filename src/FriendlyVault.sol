@@ -4,6 +4,24 @@ pragma solidity ^0.8.20;
 import "@oz_upgredeable/contracts/proxy/utils/Initializable.sol";
 import "@oz_upgredeable/contracts/utils/ReentrancyGuardUpgradeable.sol";
 
+/*  zzzzz readme + comments
+
+- Allow address-less users to interact with the blockchain - no private keys, no mnemonics storage
+- Allow gas-payment using ERC20 tokens
+- Support injection of token's Core value by an approved oracle
+- Allow user restriction e.g. when they prove to be non-fair player. A restricted user may only extract its assets out of his account
+- Allows for governance account management (in fact: governance assignee account)
+- Limits the amount of Core stored in each account (do not send us your family savings)
+- Provides a 'Gasdrop' counter which each new account is allowed to issue N first Tx in a gassless manner
+- Support injection of suspected-scammer account information from an approved oracle. These accounts will be added by multiplying the gas fees based on a global scammersGasFactor value
+- Support gas-payment delegation where the originator of the transaction delegates the gas payment, using an alloance mechanism which allows ______
+- Allow batch-operations where multiple 'lightweight transactions' will be executed in a single batch
+
+Limitation:
+  - fixed Tx cost
+
+*/
+
 interface IERC20 {
   function transfer(address to, uint256 value) external returns (bool);
   function transferFrom(address from, address to, uint256 value) external returns (bool);
@@ -39,12 +57,19 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
   address public s_scammerDetectorOracle;
   bool private s_disableGasPayments = false;
   
+
   mapping(string => mapping(address => uint)) public s_balances; // CORE included!
+
+  mapping(string => mapping(string => uint)) public s_gasTxAllowance; // in number of Tx
+
   mapping(string => VaultUser) public s_activeUsers;
+  
   mapping(string => bool) public s_restrictedUsers; // if set - active user may not receive new assets
 
   address[] public s_tokenTypesInVault; // CORE excluded
+  
   mapping(address => uint) public s_tokenTotals; // CORE excluded (its total can always be taken from contract's balance)
+  
   mapping(address => uint) public s_tokenToCoreValues; 
   //------------
 
@@ -81,6 +106,8 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
 
   event SetTokenValueInCores(address indexed token, uint oldVal, uint newVal);
 
+  event SetGasTxAllowance(string indexed gasPayerDelegate, string indexed originName, uint oldTxAllowance, uint newTxAllowance);
+
   event SetGovDelegate(address indexed oldDelegate, address indexed newDelegate);
 
   event TransferCoreFromVault(string indexed originName, string indexed toName, address indexed toAddress, uint amount);
@@ -106,6 +133,7 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
 
 
   struct GasParams {
+    string gasPayerDelegate;
     bool gasPaymentStartsWithCore;
     address[] gasTokens;
   }
@@ -224,6 +252,18 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
     s_tokenToCoreValues[token] = newVal;
     emit SetTokenValueInCores(token, oldVal, newVal);
   }  
+
+  function setGasTxAllowance(string memory gasPayerDelegate, string memory originName, uint newTxAllowance) external onlyGovDelegate {
+    _requireValidUsername(gasPayerDelegate);
+    _requireActiveUser(gasPayerDelegate);
+    _requireValidUsername(originName);
+    _requireActiveUser(originName);
+
+    uint oldTxAllowance = s_gasTxAllowance[gasPayerDelegate][originName];
+    s_gasTxAllowance[gasPayerDelegate][originName] = newTxAllowance;
+    emit SetGasTxAllowance(gasPayerDelegate, originName, oldTxAllowance, newTxAllowance);
+  }  
+  
 
   function setMinLostCredentialsInactivityPeriod(uint newMin) external onlyGovDelegate {
     uint oldMin = s_lostCredentialsInactivityPeriod;
@@ -402,7 +442,9 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
   }
 
 
-  function performBatchOperations(string memory originName, BatchOperation[] memory ops, GasParams memory gparams) external onlyGovDelegate { // nonReentrant will result in revert here
+  function performBatchOperations(string memory originName, 
+                                  BatchOperation[] memory ops, 
+                                  GasParams memory gparams) external onlyGovDelegate { // nonReentrant will result in revert here
     if (ops.length == 0) {
       return;
     }
@@ -449,9 +491,22 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
       return;
     }
 
-    string memory payer = originName; // only origin pays gas
-    _requireValidUsername(payer);
-    _requireActiveUser(payer);
+    _requireValidUsername(originName);
+    _requireActiveUser(originName);
+    _requireValidUsername(gparams.gasPayerDelegate);
+    _requireActiveUser(gparams.gasPayerDelegate);
+
+
+    string memory payer; 
+
+    bool delegatedGasPayer = !_eq(originName, gparams.gasPayerDelegate);
+
+    if (delegatedGasPayer) {
+      _subtractFromGasTxAllowance(originName, gparams.gasPayerDelegate, numTx);
+      payer = gparams.gasPayerDelegate;
+    } else {
+      payer = originName;  // no delegation; origin pays
+    }
 
     uint gasdropsToSubtract = _min(s_activeUsers[payer].numGasdropsLeft, numTx);
     s_activeUsers[payer].numGasdropsLeft -= gasdropsToSubtract;
@@ -494,6 +549,10 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
     require(gasToPay == 0, "payer failed to pay gas fees");
   }
 
+  function _subtractFromGasTxAllowance(string memory originName, string memory gasDelegate, uint numTx) private {
+    require(s_gasTxAllowance[gasDelegate][originName] >= numTx, "No gas allowance for origin");
+    s_gasTxAllowance[gasDelegate][originName] -= numTx; // subtract allowed-Tx counter
+  }
 
   function _payGasWithCore(uint gasToPay, string memory _payer) private returns(uint) {
     // pay with in-vault Core
