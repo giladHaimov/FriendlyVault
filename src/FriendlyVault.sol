@@ -4,26 +4,6 @@ pragma solidity ^0.8.20;
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 
-//zzz how upgradeable
-
-/*  zzzzz readme + comments
-
-- Allow address-less users to interact with the blockchain - no private keys, no mnemonics storage
-- Allow gas-payment using ERC20 tokens
-- Support injection of token's Core value by an approved oracle
-- Allow user restriction e.g. when they prove to be non-fair player. A restricted user may only extract its assets out of his account
-- Allows for governance account management (in fact: governance assignee account)
-- Limits the amount of Core stored in each account (do not send us your family savings)
-- Provides a 'Gasdrop' counter which each new account is allowed to issue N first Tx in a gassless manner
-- Support injection of suspected-scammer account information from an approved oracle. These accounts will be added by multiplying the gas fees based on a global scammersGasFactor value
-- Support gas-payment delegation where the originator of the transaction delegates the gas payment, using an alloance mechanism which allows ______
-- Allow batch-operations where multiple 'lightweight transactions' will be executed in a single batch
-
-Limitation:
-  - fixed Tx cost
-
-*/
-
 interface IERC20 {
   function transfer(address to, uint256 value) external returns (bool);
   function transferFrom(address from, address to, uint256 value) external returns (bool);
@@ -192,13 +172,7 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
     revert("cannot pass Core to vault without specifying destination"); 
   }
 
-  //constructor() -- cannot declare; upgradeable contract 
-
-
-  /// @custom:oz-upgrades-unsafe-allow constructor
-  constructor() {//zzzzz???
-    _disableInitializers();
-  }
+  //constructor() -> upgradeable contract, can't use
 
   function initialize(address _gov, address _govDelegate, uint _defaultNumGasdrops) external initializer {
     __ReentrancyGuard_init();
@@ -221,10 +195,6 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
   function registerUser(string memory username) external onlyGovDelegate {
     _registerUser(username);
     emit RegisterNewUser(username);
-  }
-
-  function numTokenTypesInVault() external view returns (uint) {
-    return s_tokenTypesInVault.length;
   }
 
   function setScammerStatusForUser(string memory username, bool newStatus) external onlyScamDetectorOracle {
@@ -269,7 +239,9 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
     emit SetTokenValueInCores(token, oldVal, newVal);
   }  
 
-  function setDelegatedGasPaymentAllowance(string memory gasPayerDelegate, string memory originName, uint newTxAllowance) external onlyGovDelegate {
+  function setDelegatedGasPaymentAllowance(string memory gasPayerDelegate, 
+                                           string memory originName, 
+                                           uint newTxAllowance) external onlyGovDelegate {
     _requireValidUsername(gasPayerDelegate);
     _requireActiveUser(gasPayerDelegate);
     _requireValidUsername(originName);
@@ -331,14 +303,14 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
   }  
 
   function setTokenValueOracle(address newAddress) external onlyGovDelegate {
-    require(newAddress != address(0), "zero addr");
+    // newAddress may be set to null address to disable token value injection
     address oldAddress = s_tokenValueOracle;
     s_tokenValueOracle = newAddress;
     emit SetTokenValueOracle(oldAddress, newAddress);
   }
 
   function setScamDetectorOracle(address newAddress) external onlyGovDelegate {
-    require(newAddress != address(0), "zero addr");
+    // newAddress may be set to null address to disable scammer detection
     address oldAddress = s_scamDetectorOracle;
     s_scamDetectorOracle = newAddress;
     emit SetScamDetectorOracle(oldAddress, newAddress);
@@ -356,22 +328,6 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
     address oldDelegate = s_govDelegate;
     s_govDelegate = newDelegate;
     emit SetGovDelegate(oldDelegate, newDelegate);
-  }
-
-  function getAllUserAssets(string memory username, address[] memory tokensToCheck) external view returns (uint[] memory){
-    _requireValidUsername(username);
-    _requireActiveUser(username);
-    
-    uint len = tokensToCheck.length;
-    uint[] memory _userBalances = new uint[](len);
-
-    for (uint i = 0; i < len; i++) {
-      address _token = tokensToCheck[i];
-      require(_token != address(0), "bad token");
-      uint _balance = s_balances[username][_token];
-      _userBalances[i] = _balance; // possibly CORE
-    }
-    return _userBalances;
   }
 
   function transferCoreFromVault(TxRecord memory r) public nonReentrant onlyGovDelegate {
@@ -481,7 +437,25 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
     emit BatchOperations(originName, numOps);
   }
 
+  function numTokenTypesInVault() external view returns (uint) {
+    return s_tokenTypesInVault.length;
+  }
 
+  function getAllUserAssets(string memory username, address[] memory tokensToCheck) external view returns (uint[] memory){
+    _requireValidUsername(username);
+    _requireActiveUser(username);
+    
+    uint len = tokensToCheck.length;
+    uint[] memory _userBalances = new uint[](len);
+
+    for (uint i = 0; i < len; i++) {
+      address _token = tokensToCheck[i];
+      require(_token != address(0), "bad token");
+      uint _balance = s_balances[username][_token];
+      _userBalances[i] = _balance; // possibly CORE
+    }
+    return _userBalances;
+  }
 
   function _transferTokensFromWithinVault(TxRecord memory r) private {
     // transfer token fron within the vault contract - either shortCircuit inside or transfer to an external address
@@ -508,17 +482,22 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
 
     _requireValidUsername(originName);
     _requireActiveUser(originName);
-    _requireValidUsername(gparams.gasPayerDelegate);
-    _requireActiveUser(gparams.gasPayerDelegate);
+
+    string memory delegate = gparams.gasPayerDelegate;
+    bool hasDelegate = _notEmpty(delegate);
+    if (hasDelegate) {
+      _requireValidUsername(delegate);
+      _requireActiveUser(delegate);
+    }
 
 
     string memory payer; 
 
-    bool delegatedGasPayment = !_eq(originName, gparams.gasPayerDelegate);
+    bool delegatedGasPayment = hasDelegate && !_eq(originName, delegate);
 
     if (delegatedGasPayment) {
-      _subtractFromGasTxAllowance(gparams.gasPayerDelegate, originName, numTx);
-      payer = gparams.gasPayerDelegate;
+      _subtractFromGasTxAllowance(delegate, originName, numTx);
+      payer = delegate;
     } else {
       payer = originName;  // no delegation; origin pays
     }
@@ -647,7 +626,7 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
     }
   }
 
-  function _requireValidUsername(string memory username) private view{
+  function _requireValidUsername(string memory username) private view {
     if (!_validUsername(username)) {
       revert InvalidUsername(username);
     }
@@ -754,5 +733,9 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
 
   function _eq(string memory str1, string memory str2) private pure returns(bool) {
     return keccak256(abi.encodePacked(str1)) == keccak256(abi.encodePacked(str2));
+  }
+
+  function _notEmpty(string memory str) private pure returns(bool) {
+    return bytes(str).length > 0;
   }
 }
