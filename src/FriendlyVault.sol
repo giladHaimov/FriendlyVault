@@ -198,7 +198,6 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
   }
 
   function setScammerStatusForUser(string memory username, bool newStatus) external onlyScamDetectorOracle {
-    _requireValidUsername(username);
     _requireActiveUser(username);
     bool oldStatus = s_activeUsers[username].isSuspectedScammer;
     s_activeUsers[username].isSuspectedScammer = newStatus;
@@ -206,7 +205,6 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
   }
 
   function restrictUserForReceival(string memory username, bool restict) external onlyGovDelegate {
-    _requireValidUsername(username);
     _requireActiveUser(username);
     bool oldRestictMode = s_restrictedUsers[username];
     s_restrictedUsers[username] = restict;
@@ -242,9 +240,7 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
   function setDelegatedGasPaymentAllowance(string memory gasPayerDelegate, 
                                            string memory originName, 
                                            uint newTxAllowance) external onlyGovDelegate {
-    _requireValidUsername(gasPayerDelegate);
     _requireActiveUser(gasPayerDelegate);
-    _requireValidUsername(originName);
     _requireActiveUser(originName);
 
     uint oldTxAllowance = s_delegatedGasPaymentAllowance[gasPayerDelegate][originName];
@@ -275,8 +271,6 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
                                   string memory recoveredUser, address[] memory tokens, 
                                   GasParams memory gparams) external onlyGovDelegate {
     // called by GovDelegate after enough proof has been provided offchain that recoveredAccount is indeed owned by the orig user
-    _requireValidUsername(lostUser);
-    _requireValidUsername(recoveredUser);  
     _requireActiveUser(lostUser);
     _requireActiveUser(recoveredUser);
     
@@ -422,7 +416,7 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
     _updateUserTimestamp(originName);
 
     uint numOps = ops.length;
-    s_disableGasPayments = true; // single gas payment out of loop
+    s_disableGasPayments = true; // instead: single gas payment outside of loop
     for (uint i = 0; i < numOps; i++) {
       require(ops[i].data.length > 0, "cannot transfer() Core directly into vault"); // => this.call{value: value}("");
       // note that ops[i].data is assumed to be packed with the function signature e.g.:
@@ -442,9 +436,7 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
   }
 
   function getAllUserAssets(string memory username, address[] memory tokensToCheck) external view returns (uint[] memory){
-    _requireValidUsername(username);
-    _requireActiveUser(username);
-    
+    _requireActiveUser(username);    
     uint len = tokensToCheck.length;
     uint[] memory _userBalances = new uint[](len);
 
@@ -480,20 +472,17 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
       return;
     }
 
-    _requireValidUsername(originName);
     _requireActiveUser(originName);
 
     string memory delegate = gparams.gasPayerDelegate;
     bool hasDelegate = _notEmpty(delegate);
     if (hasDelegate) {
-      _requireValidUsername(delegate);
       _requireActiveUser(delegate);
     }
 
-
     string memory payer; 
 
-    bool delegatedGasPayment = hasDelegate && !_eq(originName, delegate);
+    bool delegatedGasPayment = hasDelegate && !_eq(delegate, originName);
 
     if (delegatedGasPayment) {
       _subtractFromGasTxAllowance(delegate, originName, numTx);
@@ -621,6 +610,7 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
   }
   
   function _requireActiveUser(string memory username) private view {
+    _requireValidUsername(username);
     if (!_isActiveUser(username)) {
       revert NotAnActiveUser(username);
     }
