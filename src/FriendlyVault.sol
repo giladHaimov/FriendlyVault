@@ -51,7 +51,7 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
   
   mapping(address => uint) public s_tokenTotals; // CORE excluded (its total can always be taken from contract's balance)
   
-  mapping(address => uint) public s_tokenToCoreValues; 
+  mapping(address => uint) public s_gasTokenCoreValue; // token-to-CORE values mandatory for gas-paying tokens
   //------------
 
 
@@ -85,7 +85,7 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
 
   event TokenRemovedFromInVaultArray(address indexed _token);
 
-  event SetTokenValueInCores(address indexed token, uint oldVal, uint newVal);
+  event SetGasTokenCoreValue(address indexed token, uint oldVal, uint newVal);
 
   event SetDelegatedGasPaymentAllowance(string indexed gasPayerDelegate, string indexed originName, uint oldTxAllowance, uint newTxAllowance);
 
@@ -101,7 +101,7 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
   //------------
 
 
-  error CoreValueNotSetForToken(address token);
+  error CoreValueNotSetForGasPayingToken(address token);
 
   error InvalidToken(address token);
   
@@ -230,11 +230,11 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
     emit SetMaxCorePerUser(oldMax, newMax);
   }  
 
-  function setTokenValueInCores(address token, uint newVal) external onlyTokenValueOracle {
+  function setGasTokenCoreValue(address token, uint newVal) external onlyTokenValueOracle {
     _requireValidToken(token);
-    uint oldVal = s_tokenToCoreValues[token];
-    s_tokenToCoreValues[token] = newVal;
-    emit SetTokenValueInCores(token, oldVal, newVal);
+    uint oldVal = s_gasTokenCoreValue[token];
+    s_gasTokenCoreValue[token] = newVal;
+    emit SetGasTokenCoreValue(token, oldVal, newVal);
   }  
 
   function setDelegatedGasPaymentAllowance(string memory gasPayerDelegate, 
@@ -569,7 +569,7 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
       return 0;
     }
 
-    uint tokenValueInCore = _getTokenValueInCore(_token);
+    uint tokenValueInCore = _getTokenCoreValue(_token);
     uint userTokenBalanceInCore = userTokenBalance * tokenValueInCore;
 
     uint paidInTokensNow;
@@ -588,10 +588,10 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
     return paidInCoreNow; 
   }
 
-  function _getTokenValueInCore(address _token) private view returns(uint) {
-    uint tokenValueInCore = s_tokenToCoreValues[_token];
+  function _getTokenCoreValue(address _token) private view returns(uint) {
+    uint tokenValueInCore = s_gasTokenCoreValue[_token];
     if (tokenValueInCore == 0) {
-      revert CoreValueNotSetForToken(_token);
+      revert CoreValueNotSetForGasPayingToken(_token);
     }
     return tokenValueInCore;
   }
