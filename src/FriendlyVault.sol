@@ -27,7 +27,7 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
   address public constant CORE = address(0x11);
   string public constant GAS_FEE_ACCOUNT = "gas_fee_account"; 
 
-  uint24 public s_uniswapFeeTier;
+  uint24 public s_uniswapFeeTier; // e.g. 3000 = 0.3% fee
   ISwapRouter public s_uniswapV3Router;  // on Ethereum: 0xE592427A0AEce92De3Edee1F18E0157C05861564
 
   address public s_governance; // GOV_HUB = 0x0000000000000000000000000000000000001006;
@@ -73,7 +73,9 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
 
   event SetNumGasdropsForNewcomers(uint oldNum, uint newNum);
 
-  event SetUniswapV3Router(address oldSwapRouter, address newSwapRouter);
+  event SetUniswapV3Router(address indexed oldSwapRouter, address indexed newSwapRouter);
+
+  event SetUniswapFeeTier(uint24 oldTier, uint24 newTier);
   
   event SetScammerGasFactor(uint oldFactor, uint newFactor);
 
@@ -198,7 +200,7 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
     s_govDelegate = _govDelegate;
     s_numGasdropsForNewcomers = _defaultNumGasdrops;
     s_uniswapV3Router = ISwapRouter(_uniswapV3Router);
-    s_uniswapFeeTier = _uniswapFeeTier;  // e.g. 3000 = 0.3%
+    s_uniswapFeeTier = _uniswapFeeTier;
     _registerUser(GAS_FEE_ACCOUNT); // avoid malicious users from registering this username
     emit VaultInitialized(_gov, _govDelegate, _defaultNumGasdrops);
   }
@@ -234,6 +236,12 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
     s_numGasdropsForNewcomers = newNum;
     emit SetNumGasdropsForNewcomers(oldNum, newNum);
   }
+  
+  function setUniswapFeeTier(uint24 newTier) external onlyGovDelegate {
+    uint24 oldTier = s_uniswapFeeTier;
+    s_uniswapFeeTier = newTier;
+    emit SetUniswapFeeTier(oldTier, newTier);
+  }  
 
   function setUniswapV3Router(address newSwapRouter) external onlyGovDelegate {
     // newSwapRouter may be zero thus disabling token swapping
@@ -241,7 +249,7 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
     s_uniswapV3Router = ISwapRouter(newSwapRouter);
     emit SetUniswapV3Router(oldSwapRouter, newSwapRouter);
   }  
-  
+
   function setMaxCorePerUser(uint newMax) external onlyGovDelegate {
     uint oldMax = s_maxCorePerUser;
     s_maxCorePerUser = newMax;
