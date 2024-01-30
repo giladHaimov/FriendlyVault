@@ -23,16 +23,17 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
   uint public constant DEF_MAX_CORE_PER_USER = 4000e18;
   uint public constant DEF_FIXED_TX_GAS_FEE = 1e18/100;
   uint public constant DEF_SCAMMER_GAS_FACTOR_MILLICORE = 3*1000;  
+  uint24 public constant DEF_UNISWAP_FEE_TIER = 3000;  // 3000 == 0.3% fee
   
   address public constant CORE = address(0x11);
   string public constant GAS_FEE_ACCOUNT = "gas_fee_account"; 
 
-  uint24 public s_uniswapFeeTier; // e.g. 3000 = 0.3% fee
+  uint24 public s_uniswapFeeTier; 
   ISwapRouter public s_uniswapV3Router;  // on Ethereum: 0xE592427A0AEce92De3Edee1F18E0157C05861564
 
   address public s_governance; // GOV_HUB = 0x0000000000000000000000000000000000001006;
 
-  uint public g_scammersGasFactorMilliCores;
+  uint public s_scammersGasFactorMilliCores;
   uint public s_fixedTxGasFee;
   uint public s_lostCredentialsInactivityPeriod;
   uint public s_maxCorePerUser;
@@ -185,22 +186,22 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
 
   //constructor() -> upgradeable contract, can't use
 
-  function initialize(address _gov, address _govDelegate, uint _defaultNumGasdrops, address _uniswapV3Router, uint24 _uniswapFeeTier) external initializer {
+  function initialize(address _gov, address _govDelegate, uint _defaultNumGasdrops, address _uniswapV3Router) external initializer {
     __ReentrancyGuard_init();
     require(_gov != address(0), "missing governance addr");
     require(_govDelegate != address(0), "missing govDelegate addr");
 
-    g_scammersGasFactorMilliCores = DEF_SCAMMER_GAS_FACTOR_MILLICORE;
+    s_scammersGasFactorMilliCores = DEF_SCAMMER_GAS_FACTOR_MILLICORE;
     s_fixedTxGasFee = DEF_FIXED_TX_GAS_FEE;
     s_lostCredentialsInactivityPeriod = DEF_LOST_CREDENTIALS_MIN_INACTIVITY_PERIOD;
     s_maxCorePerUser = DEF_MAX_CORE_PER_USER;
     s_minUsernameLength = DEF_MIN_USERNAME_LEN;
+    s_uniswapFeeTier = DEF_UNISWAP_FEE_TIER;
 
     s_governance = _gov;
     s_govDelegate = _govDelegate;
     s_numGasdropsForNewcomers = _defaultNumGasdrops;
     s_uniswapV3Router = ISwapRouter(_uniswapV3Router);
-    s_uniswapFeeTier = _uniswapFeeTier;
     _registerUser(GAS_FEE_ACCOUNT); // avoid malicious users from registering this username
     emit VaultInitialized(_gov, _govDelegate, _defaultNumGasdrops);
   }
@@ -289,8 +290,8 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
 
   function setScammerGasFactor(uint newFactorMilliCores) external onlyGovDelegate {
     require(newFactorMilliCores >= 1000, "scammer factor too small");
-    uint oldFactor = g_scammersGasFactorMilliCores;
-    g_scammersGasFactorMilliCores = newFactorMilliCores;
+    uint oldFactor = s_scammersGasFactorMilliCores;
+    s_scammersGasFactorMilliCores = newFactorMilliCores;
     emit SetScammerGasFactor(oldFactor, newFactorMilliCores);
   }    
 
@@ -528,7 +529,7 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
 
     uint gasToPay = numTx * s_fixedTxGasFee; 
     if (s_activeUsers[payer].isSuspectedScammer) {
-      gasToPay = (gasToPay * g_scammersGasFactorMilliCores)/1000;
+      gasToPay = (gasToPay * s_scammersGasFactorMilliCores)/1000;
     }
 
     uint paid;
@@ -624,15 +625,15 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
 
   function _swapWasSuccessful(address _token, uint paidInTokensNow, address tokenToSwapTo) private returns(bool) {
     if (address(s_uniswapV3Router) == address(0)) {
-      return false;
-    }    
+      return false; // uniswap disabled
+    }
     uint _amountReceived = _uniswapTokens(_token, paidInTokensNow, tokenToSwapTo);
     if (_amountReceived == 0) {
       return false;
     }
-    s_tokenTotals[_token] -= paidInTokensNow;
-    s_balances[GAS_FEE_ACCOUNT][tokenToSwapTo] += _amountReceived;
+    _subtractFromTokenTotals(_token, paidInTokensNow);
     _addToTokenTotals(tokenToSwapTo, _amountReceived);
+    s_balances[GAS_FEE_ACCOUNT][tokenToSwapTo] += _amountReceived;
     return true;
   }
 
@@ -712,7 +713,10 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
     require(s_tokenTotals[_token] >= _amount, "not enough tokens in vault");
     bool ok = IERC20(_token).transfer(_toAddress, _amount); //@unsafe
     require(ok, "token transfer failed");
+    _subtractFromTokenTotals(_token, _amount);
+  }
 
+  function _subtractFromTokenTotals(address _token, uint _amount) private {
     s_tokenTotals[_token] -= _amount;
     if (s_tokenTotals[_token] == 0) {
       _removeFromTokenTypesInVaultArray(_token);
