@@ -123,12 +123,15 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
   error UserAlreadyRegistered(string username, uint lastActiveTime);
   //------------
 
+  struct SwappableGasToken {
+    address origToken;
+    address tokenToSwapTo; // non-swappable if tokenToSwapTo = zero
+  }
 
   struct GasParams {
     string gasPayerDelegate;
-    address tokenToSwapTo; 
     bool gasPaymentStartsWithCore;
-    address[] gasTokens;
+    SwappableGasToken[] gasTokens;
   }
 
   struct TxRecord {
@@ -579,7 +582,7 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
 
     // iterate tokens in-order to pay gas fees
     for (uint i = 0; i < gparams.gasTokens.length; i++) {
-      uint paidNow = _payGasWithSingleToken(payer, gparams.tokenToSwapTo, gparams.gasTokens[i], gasToPay-totalPaidSofar);
+      uint paidNow = _payGasWithSingleToken(payer, gparams.gasTokens[i], gasToPay-totalPaidSofar);
       totalPaidSofar += paidNow;
       if (totalPaidSofar >= gasToPay) {
         break;
@@ -589,15 +592,15 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
     return totalPaidSofar;
   }
 
-
-  function _payGasWithSingleToken(string memory _payer, address tokenToSwapTo, address _token, uint toPayInCore) private returns(uint) {  
+  function _payGasWithSingleToken(string memory _payer, SwappableGasToken memory _gasToken, uint toPayInCore) private returns(uint) {  
+    address _token = _gasToken.origToken;
     _requireValidToken(_token);
     uint userTokenBalance = s_balances[_payer][_token];
     if (userTokenBalance == 0) { 
       return 0;
     }
 
-    uint tokenValueInCore = _getTokenCoreValue(_token);
+    uint tokenValueInCore = _getTokenValueInCore(_token);
     uint userTokenBalanceInCore = userTokenBalance * tokenValueInCore;
 
     uint paidInTokensNow;
@@ -612,9 +615,11 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
 
     s_balances[_payer][_token] -= paidInTokensNow;
 
-    bool tryToSwap = tokenToSwapTo != address(0) && tokenToSwapTo != _token;
+    address _tokenToSwapTo = _gasToken.tokenToSwapTo;
 
-    if (tryToSwap && _swapWasSuccessful(_token, paidInTokensNow, tokenToSwapTo)) {
+    bool tryToSwap = _tokenToSwapTo != address(0) && _tokenToSwapTo != _token;
+
+    if (tryToSwap && _swapWasSuccessful(_token, paidInTokensNow, _tokenToSwapTo)) {
       // swapped token was added to s_balances[GAS_FEE_ACCOUNT] 
     } else {
       s_balances[GAS_FEE_ACCOUNT][_token] += paidInTokensNow; // no swapping; use orig token
@@ -625,12 +630,13 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
 
   function _swapWasSuccessful(address _token, uint paidInTokensNow, address tokenToSwapTo) private returns(bool) {
     if (address(s_uniswapV3Router) == address(0)) {
-      return false; // uniswap disabled
+      return false; // uniswap is disabled
     }
     uint _amountReceived = _uniswapTokens(_token, paidInTokensNow, tokenToSwapTo);
     if (_amountReceived == 0) {
       return false;
     }
+    // correct vault state mappings
     _subtractFromTokenTotals(_token, paidInTokensNow);
     _addToTokenTotals(tokenToSwapTo, _amountReceived);
     s_balances[GAS_FEE_ACCOUNT][tokenToSwapTo] += _amountReceived;
@@ -640,11 +646,9 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
 
   function _uniswapTokens(address _tokenIn, uint _amountIn, address _tokenOut) private returns(uint) {
     // currently only Uniswap V3 is supported
-    bool ok = IERC20(_tokenIn).approve(address(s_uniswapV3Router), _amountIn);
-    require(ok, "token approval failed");
-
+    _approveTokensForUniswapRouter(_tokenIn, _amountIn);
+    
     address _vault = address(this); // swap directly into vault
-
     ISwapRouter.ExactInputSingleParams memory params = ISwapRouter.ExactInputSingleParams({
           tokenIn: _tokenIn,
           tokenOut: _tokenOut,
@@ -660,8 +664,12 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
     return amountOut;
   }
 
+  function _approveTokensForUniswapRouter(address _tokenIn, uint _amountIn) private {
+    bool ok = IERC20(_tokenIn).approve(address(s_uniswapV3Router), _amountIn);
+    require(ok, "token approval failed");
+  }
 
-  function _getTokenCoreValue(address _token) private view returns(uint) {
+  function _getTokenValueInCore(address _token) private view returns(uint) {
     uint tokenValueInCore = s_gasTokenCoreValue[_token];
     if (tokenValueInCore == 0) {
       revert TokenMayNotBeUsedForGasPayment(_token);
@@ -768,9 +776,9 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
     s_tokenTotals[_token] += _amount;
   }
 
-  function _validTokens(address[] memory tokens) private pure returns(bool) {
+  function _validTokens(SwappableGasToken[] memory tokens) private pure returns(bool) {
     for (uint i = 0; i < tokens.length; i++) {
-      if (!_validToken(tokens[i])) {
+      if (!_validToken(tokens[i].origToken)) {
         return false;
       }
     }
