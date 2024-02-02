@@ -361,6 +361,7 @@ contract CoreVault is Initializable, ReentrancyGuardUpgradeable {
   }
 
 
+  //@transfer: core from external address to vault
   function transferCoreFromExternalAddress(string memory toUsername) external payable nonReentrant { // not onlyGovDelegate!
     // invoked by an external EOA to pass Core into vault 
     _verifyCanTransferToUser(toUsername);
@@ -374,6 +375,7 @@ contract CoreVault is Initializable, ReentrancyGuardUpgradeable {
   }
 
 
+  //@transfer: token from external address to vault
   function transferTokenFromExternalAddress(address token, uint amount, string memory toUsername) external nonReentrant { // not onlyGovDelegate!
     // invoked by an external EOA to pass token into vault 
     _verifyCanTransferToUser(toUsername);
@@ -387,24 +389,18 @@ contract CoreVault is Initializable, ReentrancyGuardUpgradeable {
   }
 
 
+  //@transfer: Core from within vault to another account (EOA or vault-user)
+  //   transfer directions:
+  //      vault => EOA
+  //      vault => vault (=shortCircuit)
   function transferCoreFromVault(TxRecord memory r) public nonReentrant onlyGovDelegate {
-    // transfer directions:
-    //    vault => EOA
-    //    vault => vault (=shortCircuit)
-    require(r.token == address(0), "cannot pass token to this function");
+    require(r.token == address(0), "cannot pass token to a core transfer function");
+    require(r.fromAddress == address(0), "this operation cannot use fromAddress");
     require(r.amount > 0, "Core amount should be positive");
-    _requireValidUsername(r.originName);
+    _requireSameNames(r.originName, r.fromName, "origin must be equal to from-name");
     require(_validTokens(r.gparams.gasTokens), "invalid tokens");
 
-    _requireValidUsername(r.fromName);
-    require(_eq(r.originName, r.fromName), "origin must be equal to from-name");
-
-    _updateUserTimestamp(r.originName);
-
-    require(_validUsername(r.fromName), "fromName must be passed");
-    require(r.fromAddress == address(0), "this operation cannot use fromAddress");
-
-    // transfer token fron within contract - either shortCircuit inside or transfer to an external address (or both)
+    _updateUserTimestamp(r.fromName);
 
     require(address(this).balance >= r.amount, "not enough Core in vault");
     require(s_balances[r.fromName][CORE] >= r.amount, "not enough Core in user's balance");
@@ -424,19 +420,19 @@ contract CoreVault is Initializable, ReentrancyGuardUpgradeable {
   }
 
 
+  //@transfer: tokens from within vault to another account (EOA or vault-user)
+  //   transfer directions:
+  //      vault => EOA
+  //      vault => vault (=shortCircuit)
   function transferTokenFromVault(TxRecord memory r) public nonReentrant onlyGovDelegate {
-    // transfer tokens from within vault:
-    //    vault => EOA
-    //    vault => vault (=shortCircuit)
     require(r.fromAddress == address(0), "cannot use fromAddress");
-    _requireValidUsername(r.originName);
-    _requireValidUsername(r.fromName);
+    _requireSameNames(r.originName, r.fromName, "origin must be equal to from-name");
     _requireValidToken(r.token);
-  require(_validTokens(r.gparams.gasTokens), "invalid tokens");
+    require(_validTokens(r.gparams.gasTokens), "invalid tokens");
 
     _updateUserTimestamp(r.originName);
 
-  _transferTokensFromWithinVault(r);
+    _transferTokensFromWithinVault(r);
 
     _payGasFee(1, r.originName, r.gparams);
     emit TransferToken(r.originName, r.fromAddress, r.fromName, r.toName, r.toAddress, r.token, r.amount);
@@ -484,14 +480,10 @@ contract CoreVault is Initializable, ReentrancyGuardUpgradeable {
     return _userBalances;
   }
 
-  function _transferTokensFromWithinVault(TxRecord memory r) private {
-    // transfer token fron within the vault contract - either shortCircuit inside or transfer to an external address
-    _requireValidUsername(r.fromName);
-    require(_eq(r.originName,r.fromName), "origin <> from");
-    require(r.fromAddress == address(0), "fromAddress cannot be used");
 
+  function _transferTokensFromWithinVault(TxRecord memory r) private {  
     s_balances[r.fromName][r.token] -= r.amount;
-
+    
     if (r.allowShortCircuit && _canTransferTo(r.toName)) {
       s_balances[r.toName][r.token] += r.amount;
     } else if (r.toAddress != address(0)) {
@@ -500,6 +492,7 @@ contract CoreVault is Initializable, ReentrancyGuardUpgradeable {
       revert("cannot perform operation");
     }
   }
+  
 
   function _payGasFee(uint numTx, string memory originName, GasParams memory gparams) private {
     // gas fees must be all in-vault
@@ -630,6 +623,11 @@ contract CoreVault is Initializable, ReentrancyGuardUpgradeable {
     return paidInCoreNow; 
   }
 
+  function _requireSameNames(string memory name1, string memory name2, string memory err) private view {
+    _requireValidUsername(name1);
+    _requireValidUsername(name2);    
+    require(_eq(name1, name2), err);
+  }
 
   function _swapWasSuccessful(address _token, uint paidInTokensNow, address tokenToSwapTo) private returns(bool) {
     uint _amountReceived = _uniswapTokens(_token, paidInTokensNow, tokenToSwapTo);
