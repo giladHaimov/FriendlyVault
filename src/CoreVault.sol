@@ -15,7 +15,7 @@ interface IERC20 {
 
 
 
-contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
+contract CoreVault is Initializable, ReentrancyGuardUpgradeable {
   
   uint[32] public __gap; // sanity gap for future stateful base-contracts
   
@@ -367,7 +367,7 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
 
     _updateUserTimestamp(toUsername);
 
-    _addToUserCoreBalance(toUsername, msg.value);
+    _addCoreToUserBalance(toUsername, msg.value);
     
     //_payGasFee(..) -- gas paid by EOA 
     emit TransferCoreFromExternalAddress(tx.origin, msg.sender, toUsername, msg.value);
@@ -763,7 +763,7 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
     if (amount == 0) {
       return;
     }
-    require(_validToken(token), "invalid token");
+    _requireValidToken(token);
     require(_validUsername(toUsername) && _canTransferTo(toUsername), "cannot transfer to toName");
 
     s_balances[toUsername][token] += amount;
@@ -776,13 +776,14 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
     require(ok, "token transfer failed");
   }
 
+
   function _verifySufficientAllowance(address token, address _tokenOwner, uint amount) private view {
     address _spender = address(this);
     uint _allowance = IERC20(token).allowance(_tokenOwner, _spender);
     require(_allowance >= amount, "vault should have an allowance of >= amount");
   }
 
-  function _addToUserCoreBalance(string memory toUsername, uint coreAmount) private {
+  function _addCoreToUserBalance(string memory toUsername, uint coreAmount) private {
     s_balances[toUsername][CORE] += coreAmount;
     require(s_balances[toUsername][CORE] <= s_maxCorePerUser, "cannot exceed maxCorePerUser");    
   }
