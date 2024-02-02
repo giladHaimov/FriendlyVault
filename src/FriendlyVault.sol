@@ -14,6 +14,7 @@ interface IERC20 {
 }
 
 
+
 contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
   
   uint[32] public __gap; // sanity gap for future stateful base-contracts
@@ -28,6 +29,7 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
   address public constant CORE = address(0x11);
   string public constant GAS_FEE_ACCOUNT = "gas_fee_account"; 
 
+
   uint24 public s_uniswapFeeTier; 
   ISwapRouter public s_uniswapV3Router;  // on Ethereum: 0xE592427A0AEce92De3Edee1F18E0157C05861564
 
@@ -39,12 +41,13 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
   uint public s_maxCorePerUser;
   uint public s_minUsernameLength;
 
-  uint public s_numGasdropsForNewcomers; // assigned to each new user
+  uint public s_numGasdropsForNewcomers; // to be assigned to each new user
   address public s_govDelegate;
   address public s_tokenValueOracle;
   address public s_scamDetectorOracle;
   bool private s_disableGasPayments;
-  
+
+  address[] public s_tokenTypesInVault; // CORE excluded
 
   mapping(string => mapping(address => uint)) public s_balances; // CORE included!
 
@@ -53,8 +56,6 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
   mapping(string => VaultUser) public s_activeUsers;
   
   mapping(string => bool) public s_restrictedUsers; // if set - active user may not receive new assets
-
-  address[] public s_tokenTypesInVault; // CORE excluded
   
   mapping(address => uint) public s_tokenTotals; // CORE excluded (its total can always be taken from contract's balance)
   
@@ -104,7 +105,9 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
 
   event TransferCoreFromVault(string indexed originName, string indexed toName, address indexed toAddress, uint amount);
 
-  event TransferCoreFromExternalAddress(string indexed originName, address indexed fromAddress, string indexed toName, uint amount);
+  event TransferCoreFromExternalAddress(address indexed txOrigin, address indexed fromAddress, string indexed toName, uint amount);
+
+  event TransferTokenFromExternalAddress(address indexed tokenOwner, string indexed toUsername, address indexed token, uint amount);
 
   event TransferToken(string indexed originName, address fromAddress, string indexed fromName, string indexed toName, address toAddress, address token, uint amount);
   
@@ -122,6 +125,7 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
 
   error UserAlreadyRegistered(string username, uint lastActiveTime);
   //------------
+
 
   struct SwappableGasToken {
     address origToken;
@@ -260,12 +264,12 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
     emit SetMaxCorePerUser(oldMax, newMax);
   }  
 
-  function setGasTokenCoreValue(address token, uint newVal) external onlyTokenValueOracle {
+  function setGasTokenValueInCore(address token, uint newValueInCore) external onlyTokenValueOracle {
     // newVal can be set to zero indicating token may not be used for gas payment
     _requireValidToken(token);
-    uint oldVal = s_gasTokenCoreValue[token];
-    s_gasTokenCoreValue[token] = newVal;
-    emit SetGasTokenCoreValue(token, oldVal, newVal);
+    uint oldValueInCore = s_gasTokenCoreValue[token];
+    s_gasTokenCoreValue[token] = newValueInCore;
+    emit SetGasTokenCoreValue(token, oldValueInCore, newValueInCore);
   }  
 
   function setDelegatedGasPaymentAllowance(string memory gasPayerDelegate, 
@@ -297,6 +301,7 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
     s_scammersGasFactorMilliCores = newFactorMilliCores;
     emit SetScammerGasFactor(oldFactor, newFactorMilliCores);
   }    
+
 
   function recoverLostCredentials(string memory originName, string memory lostUser, 
                                   string memory recoveredUser, address[] memory tokens, 
@@ -392,46 +397,47 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
   }
 
 
-  function transferCoreFromExternalAddress(TxRecord memory r) public payable nonReentrant onlyGovDelegate {
-    // EOA => vault
-    require(r.token == address(0), "cannot pass token to this function");
-    require(r.amount == 0, "Core amount should be taken from msg.value");
-    _requireValidUsername(r.originName);
-    require(_validTokens(r.gparams.gasTokens), "invalid tokens");
+  function transferCoreFromExternalAddress(string memory toUsername) external payable nonReentrant { // not onlyGovDelegate!
+    // invoked by an EOA to pass Core into vault 
+    require(_isActiveUser(toUsername), "not a user");
+    require(_canTransferTo(toUsername), "cannot transfer Core to destination name");
 
-    _updateUserTimestamp(r.originName);
+    _updateUserTimestamp(toUsername);
 
-    require(_isEmpty(r.fromName), "fromName cannot be used");
-    require(r.fromAddress != address(0), "this operation requires fromAddress");
-
-    require(_validUsername(r.toName) && _canTransferTo(r.toName), "cannot transfer Core to toName");
-
-    s_balances[r.toName][CORE] += msg.value;
-    require(s_balances[r.toName][CORE] <= s_maxCorePerUser, "cannot exceed maxCorePerUser");
+    _addToUserCoreBalance(toUsername, msg.value);
     
-    _payGasFee(1, r.originName, r.gparams);
-    emit TransferCoreFromExternalAddress(r.originName, r.fromAddress, r.toName, r.amount);
+    //_payGasFee(..) -- gas paid by EOA 
+    emit TransferCoreFromExternalAddress(tx.origin, msg.sender, toUsername, msg.value);
   }
 
 
-  function transferToken(TxRecord memory r) public nonReentrant onlyGovDelegate {
-    // transfer directions:
-    //    EOA => vault
+  function transferTokenFromExternalAddress(address token, uint amount, string memory toUsername) external nonReentrant { // not onlyGovDelegate!
+    // invoked by an EOA to pass Core into vault (EOA pays gas!)
+    require(_isActiveUser(toUsername), "not a user");
+    require(_canTransferTo(toUsername), "cannot transfer tokens to destination name");
+
+    _updateUserTimestamp(toUsername);
+
+    _transferTokensFromExternalAddressIntoVault(token, amount, toUsername);
+    
+    //_payGasFee(..) -- gas paid by EOA 
+    emit TransferTokenFromExternalAddress(msg.sender, toUsername, token, amount);
+  }
+
+
+  function transferTokenFromVault(TxRecord memory r) public nonReentrant onlyGovDelegate {
+    // transfer tokens from within vault:
     //    vault => EOA
     //    vault => vault (=shortCircuit)
+    require(r.fromAddress == address(0), "cannot use fromAddress");
     _requireValidUsername(r.originName);
+    _requireValidUsername(r.fromName);
     _requireValidToken(r.token);
-    require(_validTokens(r.gparams.gasTokens), "invalid tokens");
+  require(_validTokens(r.gparams.gasTokens), "invalid tokens");
 
     _updateUserTimestamp(r.originName);
 
-    bool tokensOutsideOfVault = _isEmpty(r.fromName) && r.fromAddress != address(0);
-
-    if (tokensOutsideOfVault) {
-      _transferTokensFromExternalAddressIntoVault(r);
-    } else {
-      _transferTokensFromWithinVault(r);
-    }
+  _transferTokensFromWithinVault(r);
 
     _payGasFee(1, r.originName, r.gparams);
     emit TransferToken(r.originName, r.fromAddress, r.fromName, r.toName, r.toAddress, r.token, r.amount);
@@ -446,9 +452,8 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
     }
     _updateUserTimestamp(originName);
 
-    uint numOps = ops.length;
     s_disableGasPayments = true; // instead: single gas payment outside of loop
-    for (uint i = 0; i < numOps; i++) {
+    for (uint i = 0; i < ops.length; i++) {
       require(ops[i].data.length > 0, "cannot transfer() Core directly into vault"); // => this.call{value: value}("");
       // note that ops[i].data is assumed to be packed with the function signature e.g.:
       //    bytes4 functionSignature = bytes4(keccak256(bytes(_signatureStr)));
@@ -458,8 +463,8 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
     }    
     s_disableGasPayments = false;
 
-    _payGasFee(numOps, originName, gparams);
-    emit BatchOperations(originName, numOps);
+    _payGasFee(ops.length, originName, gparams);
+    emit BatchOperations(originName, ops.length);
   }
 
   function numTokenTypesInVault() external view returns (uint) {
@@ -505,21 +510,15 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
 
     _requireActiveUser(originName);
 
-    string memory delegate = gparams.gasPayerDelegate;
-    bool hasDelegate = _notEmpty(delegate);
-    if (hasDelegate) {
-      _requireActiveUser(delegate);
-    }
+    string memory _delegate = _getGasDelegate(gparams);
+    bool delegatedGasPayment = _notEmpty(_delegate) && !_eq(_delegate, originName);
 
     string memory payer; 
-
-    bool delegatedGasPayment = hasDelegate && !_eq(delegate, originName);
-
     if (delegatedGasPayment) {
-      _subtractFromGasTxAllowance(delegate, originName, numTx);
-      payer = delegate;
+      _subtractFromGasTxAllowance(_delegate, originName, numTx);
+      payer = _delegate;
     } else {
-      payer = originName;  // no delegation; origin pays
+      payer = originName;  // no delegation - origin pays
     }
 
     uint gasdropsToSubtract = _min(s_activeUsers[payer].numGasdropsLeft, numTx);
@@ -539,7 +538,6 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
     if (gparams.gasPaymentStartsWithCore) {
       paid = _payGasWithCore(payer, gasToPay);
     } else {
-      // start with tokens
       paid = _payGasWithTokens(payer, gasToPay, gparams);
     }
     gasToPay -= paid;
@@ -550,12 +548,10 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
 
     bool alreadyPaidWithCore = gparams.gasPaymentStartsWithCore;
 
-    // use the 'other' to pay the rest
+    // use the 'other' method to pay the rest of the gas
     if (alreadyPaidWithCore) {
-      // pay the rest with tokens
       paid = _payGasWithTokens(payer, gasToPay, gparams);
     } else {
-      // pay the rest with Core
       paid = _payGasWithCore(payer, gasToPay);
     }
     gasToPay -= paid;
@@ -568,8 +564,16 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
     s_delegatedGasPaymentAllowance[gasDelegate][originName] -= numTx;
   }
 
+  function _getGasDelegate(GasParams memory gparams) private view returns(string memory) {
+    string memory delegate = gparams.gasPayerDelegate;
+    if (_notEmpty(delegate)) {
+      _requireActiveUser(delegate);
+    }
+    return delegate;
+  }
+
   function _payGasWithCore(string memory _payer, uint gasToPay) private returns(uint) {
-    // pay with in-vault Core
+    // only use in-vault Core for gas payment
     uint paidInCore = _min(s_balances[_payer][CORE], gasToPay);
     s_balances[_payer][CORE] -= paidInCore;
     s_balances[GAS_FEE_ACCOUNT][CORE] += paidInCore;
@@ -577,10 +581,10 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
   }
 
   function _payGasWithTokens(string memory payer, uint gasToPay, GasParams memory gparams) private returns(uint) {
-    // pay with in-vault token
+    // only use in-vault tokens for gas payment
     uint totalPaidSofar = 0;
 
-    // iterate tokens in-order to pay gas fees
+    // iterate over gas tokens in-order
     for (uint i = 0; i < gparams.gasTokens.length; i++) {
       uint paidNow = _payGasWithSingleToken(payer, gparams.gasTokens[i], gasToPay-totalPaidSofar);
       totalPaidSofar += paidNow;
@@ -629,14 +633,11 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
 
 
   function _swapWasSuccessful(address _token, uint paidInTokensNow, address tokenToSwapTo) private returns(bool) {
-    if (address(s_uniswapV3Router) == address(0)) {
-      return false; // uniswap is disabled
-    }
     uint _amountReceived = _uniswapTokens(_token, paidInTokensNow, tokenToSwapTo);
     if (_amountReceived == 0) {
-      return false;
+      return false; // swap failed
     }
-    // correct vault state mappings
+    // update vault state mappings
     _subtractFromTokenTotals(_token, paidInTokensNow);
     _addToTokenTotals(tokenToSwapTo, _amountReceived);
     s_balances[GAS_FEE_ACCOUNT][tokenToSwapTo] += _amountReceived;
@@ -645,15 +646,18 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
 
 
   function _uniswapTokens(address _tokenIn, uint _amountIn, address _tokenOut) private returns(uint) {
-    // currently only Uniswap V3 is supported
+    // currently only Uniswap-V3 is supported
+    if (address(s_uniswapV3Router) == address(0)) {
+      return 0; 
+    }
     _approveTokensForUniswapRouter(_tokenIn, _amountIn);
     
-    address _vault = address(this); // swap directly into vault
+    address _vault = address(this); 
     ISwapRouter.ExactInputSingleParams memory params = ISwapRouter.ExactInputSingleParams({
           tokenIn: _tokenIn,
           tokenOut: _tokenOut,
           fee: s_uniswapFeeTier,
-          recipient: _vault,
+          recipient: _vault,  // swap directly into vault
           deadline: block.timestamp,
           amountIn: _amountIn,
           amountOutMinimum: 0,
@@ -665,6 +669,7 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
   }
 
   function _approveTokensForUniswapRouter(address _tokenIn, uint _amountIn) private {
+    require(address(s_uniswapV3Router) != address(0), "uniswap router not set");
     bool ok = IERC20(_tokenIn).approve(address(s_uniswapV3Router), _amountIn);
     require(ok, "token approval failed");
   }
@@ -754,19 +759,26 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
                                           isSuspectedScammer: false });
   }
 
-  function _transferTokensFromExternalAddressIntoVault(TxRecord memory r) private {
-    require(_validUsername(r.toName) && _canTransferTo(r.toName), "cannot transfer to toName");
 
-    s_balances[r.toName][r.token] += r.amount;
-    _addToTokenTotals(r.token, r.amount);
-    IERC20 _token = IERC20(r.token);
-    address _owner = r.fromAddress;
+  function _transferTokensFromExternalAddressIntoVault(address token, uint amount, string memory toUsername) private {
+    require(_validUsername(toUsername) && _canTransferTo(toUsername), "cannot transfer to toName");
+
+    s_balances[toUsername][token] += amount;
+    _addToTokenTotals(token, amount);
+
+    address _tokenOwner = msg.sender;
+    IERC20 _token = IERC20(token);
     address _spender = address(this);
-    uint _allowance = _token.allowance(_owner, _spender);
-    require(_allowance >= r.amount, "vault should have an allowance of >= amount");
+    uint _allowance = _token.allowance(_tokenOwner, _spender);
+    require(_allowance >= amount, "vault should have an allowance of >= amount");
 
-    bool ok = _token.transferFrom(r.fromAddress, address(this), r.amount); //@unsafe
+    bool ok = _token.transferFrom(_tokenOwner, address(this), amount); //@unsafe
     require(ok, "token transfer failed");
+  }
+
+  function _addToUserCoreBalance(string memory toUsername, uint coreAmount) private {
+    s_balances[toUsername][CORE] += coreAmount;
+    require(s_balances[toUsername][CORE] <= s_maxCorePerUser, "cannot exceed maxCorePerUser");    
   }
 
   function _addToTokenTotals(address _token, uint _amount) private {
