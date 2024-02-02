@@ -360,6 +360,33 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
     emit SetGovDelegate(oldDelegate, newDelegate);
   }
 
+
+  function transferCoreFromExternalAddress(string memory toUsername) external payable nonReentrant { // not onlyGovDelegate!
+    // invoked by an external EOA to pass Core into vault 
+    _verifyCanTransferToUser(toUsername);
+
+    _updateUserTimestamp(toUsername);
+
+    _addToUserCoreBalance(toUsername, msg.value);
+    
+    //_payGasFee(..) -- gas paid by EOA 
+    emit TransferCoreFromExternalAddress(tx.origin, msg.sender, toUsername, msg.value);
+  }
+
+
+  function transferTokenFromExternalAddress(address token, uint amount, string memory toUsername) external nonReentrant { // not onlyGovDelegate!
+    // invoked by an external EOA to pass token into vault 
+    _verifyCanTransferToUser(toUsername);
+    
+    _updateUserTimestamp(toUsername);
+
+    _transferTokensFromExternalAddressIntoVault(token, amount, toUsername);
+    
+    //_payGasFee(..) -- gas paid by EOA 
+    emit TransferTokenFromExternalAddress(msg.sender, toUsername, token, amount);
+  }
+
+
   function transferCoreFromVault(TxRecord memory r) public nonReentrant onlyGovDelegate {
     // transfer directions:
     //    vault => EOA
@@ -394,34 +421,6 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
     }
     _payGasFee(1, r.originName, r.gparams);
     emit TransferCoreFromVault(r.originName, r.toName, r.toAddress, r.amount);
-  }
-
-
-  function transferCoreFromExternalAddress(string memory toUsername) external payable nonReentrant { // not onlyGovDelegate!
-    // invoked by an EOA to pass Core into vault 
-    require(_isActiveUser(toUsername), "not a user");
-    require(_canTransferTo(toUsername), "cannot transfer Core to destination name");
-
-    _updateUserTimestamp(toUsername);
-
-    _addToUserCoreBalance(toUsername, msg.value);
-    
-    //_payGasFee(..) -- gas paid by EOA 
-    emit TransferCoreFromExternalAddress(tx.origin, msg.sender, toUsername, msg.value);
-  }
-
-
-  function transferTokenFromExternalAddress(address token, uint amount, string memory toUsername) external nonReentrant { // not onlyGovDelegate!
-    // invoked by an EOA to pass Core into vault (EOA pays gas!)
-    require(_isActiveUser(toUsername), "not a user");
-    require(_canTransferTo(toUsername), "cannot transfer tokens to destination name");
-
-    _updateUserTimestamp(toUsername);
-
-    _transferTokensFromExternalAddressIntoVault(token, amount, toUsername);
-    
-    //_payGasFee(..) -- gas paid by EOA 
-    emit TransferTokenFromExternalAddress(msg.sender, toUsername, token, amount);
   }
 
 
@@ -761,19 +760,26 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
 
 
   function _transferTokensFromExternalAddressIntoVault(address token, uint amount, string memory toUsername) private {
+    if (amount == 0) {
+      return;
+    }
+    require(_validToken(token), "invalid token");
     require(_validUsername(toUsername) && _canTransferTo(toUsername), "cannot transfer to toName");
 
     s_balances[toUsername][token] += amount;
     _addToTokenTotals(token, amount);
 
     address _tokenOwner = msg.sender;
-    IERC20 _token = IERC20(token);
-    address _spender = address(this);
-    uint _allowance = _token.allowance(_tokenOwner, _spender);
-    require(_allowance >= amount, "vault should have an allowance of >= amount");
+    _verifySufficientAllowance(token, _tokenOwner, amount);
 
-    bool ok = _token.transferFrom(_tokenOwner, address(this), amount); //@unsafe
+    bool ok = IERC20(token).transferFrom(_tokenOwner, address(this), amount); //@unsafe
     require(ok, "token transfer failed");
+  }
+
+  function _verifySufficientAllowance(address token, address _tokenOwner, uint amount) private view {
+    address _spender = address(this);
+    uint _allowance = IERC20(token).allowance(_tokenOwner, _spender);
+    require(_allowance >= amount, "vault should have an allowance of >= amount");
   }
 
   function _addToUserCoreBalance(string memory toUsername, uint coreAmount) private {
@@ -813,6 +819,11 @@ contract FriendlyVault is Initializable, ReentrancyGuardUpgradeable {
     require(_isActiveUser(_username), "not a user");
     uint _now = block.timestamp;
     s_activeUsers[_username].lastActiveTime = _now;
+  }
+
+  function _verifyCanTransferToUser(string memory toUsername) private view {
+    require(_isActiveUser(toUsername), "not a user");
+    require(_canTransferTo(toUsername), "cannot transfer Core to destination name");
   }
 
   function _min(uint a, uint b) private pure returns(uint) {
