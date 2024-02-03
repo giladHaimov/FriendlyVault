@@ -361,7 +361,7 @@ contract CoreVault is Initializable, ReentrancyGuardUpgradeable {
   }
 
 
-  //@transfer: core from external address to vault
+  //@transfer core from external address into vault
   function transferCoreFromExternalAddress(string memory toUsername) external payable nonReentrant { // not onlyGovDelegate!
     // invoked by an external EOA to pass Core into vault 
     _verifyCanTransferToUser(toUsername);
@@ -375,7 +375,7 @@ contract CoreVault is Initializable, ReentrancyGuardUpgradeable {
   }
 
 
-  //@transfer: token from external address to vault
+  //@transfer token from external address into vault
   function transferTokenFromExternalAddress(address token, uint amount, string memory toUsername) external nonReentrant { // not onlyGovDelegate!
     // invoked by an external EOA to pass token into vault 
     _verifyCanTransferToUser(toUsername);
@@ -466,6 +466,15 @@ contract CoreVault is Initializable, ReentrancyGuardUpgradeable {
     return s_tokenTypesInVault.length;
   }
 
+  function isActiveUser(string memory username) external view returns(bool) {
+    return _isActiveUser(username);
+  }
+
+  function getCoreBalance(string memory username) external view returns(uint) {
+    return s_balances[username][CORE];
+  }
+
+
   function getAllUserAssets(string memory username, address[] memory tokensToCheck) external view returns (uint[] memory){
     _requireActiveUser(username);    
     uint len = tokensToCheck.length;
@@ -492,7 +501,7 @@ contract CoreVault is Initializable, ReentrancyGuardUpgradeable {
       revert("cannot perform operation");
     }
   }
-  
+
 
   function _payGasFee(uint numTx, string memory originName, GasParams memory gparams) private {
     // gas fees must be all in-vault
@@ -705,10 +714,6 @@ contract CoreVault is Initializable, ReentrancyGuardUpgradeable {
     }
   }
 
-  function _validUsername(string memory username) private view returns(bool) {
-    return bytes(username).length >= s_minUsernameLength;
-  }
-
   function _isEmpty(string memory s) private pure returns(bool) {
     return bytes(s).length == 0;
   }
@@ -762,23 +767,27 @@ contract CoreVault is Initializable, ReentrancyGuardUpgradeable {
       return;
     }
     _requireValidToken(token);
-    require(_validUsername(toUsername) && _canTransferTo(toUsername), "cannot transfer to toName");
+    require(_canTransferTo(toUsername), "cannot transfer to toName");
 
     s_balances[toUsername][token] += amount;
     _addToTokenTotals(token, amount);
 
-    address _tokenOwner = msg.sender;
-    _verifySufficientAllowance(token, _tokenOwner, amount);
+    address tokenOwner = msg.sender;
 
-    bool ok = IERC20(token).transferFrom(_tokenOwner, address(this), amount); //@unsafe
-    require(ok, "token transfer failed");
+    _verifySufficientAllowance(token, tokenOwner, amount);
+
+    _transferTokensIntoVault(token, tokenOwner, amount);
   }
-
 
   function _verifySufficientAllowance(address token, address _tokenOwner, uint amount) private view {
     address _spender = address(this);
     uint _allowance = IERC20(token).allowance(_tokenOwner, _spender);
     require(_allowance >= amount, "vault should have an allowance of >= amount");
+  }
+
+  function _transferTokensIntoVault(address token, address tokenOwner, uint amount) private {
+    bool ok = IERC20(token).transferFrom(tokenOwner, address(this), amount); //@unsafe
+    require(ok, "token transfer failed");
   }
 
   function _addCoreToUserBalance(string memory toUsername, uint coreAmount) private {
@@ -810,8 +819,8 @@ contract CoreVault is Initializable, ReentrancyGuardUpgradeable {
     return _validUsername(username) && _isActiveUser(username) && !s_restrictedUsers[username];
   }
 
-  function _isActiveUser(string memory username) private view returns(bool) {
-    return s_activeUsers[username].lastActiveTime > 0;
+  function _validUsername(string memory username) private view returns(bool) {
+    return bytes(username).length >= s_minUsernameLength;
   }
 
   function _updateUserTimestamp(string memory _username) private {
@@ -820,8 +829,11 @@ contract CoreVault is Initializable, ReentrancyGuardUpgradeable {
     s_activeUsers[_username].lastActiveTime = _now;
   }
 
+  function _isActiveUser(string memory username) private view returns(bool) {
+    return s_activeUsers[username].lastActiveTime > 0;
+  }
+
   function _verifyCanTransferToUser(string memory toUsername) private view {
-    require(_isActiveUser(toUsername), "not a user");
     require(_canTransferTo(toUsername), "cannot transfer Core to destination name");
   }
 
