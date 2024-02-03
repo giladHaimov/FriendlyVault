@@ -1,18 +1,16 @@
 // SPDX-License-Identifier: Apache2.0
 pragma solidity ^0.8.20;
 
-import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
-import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
-import './uniswap-v3/ISwapRouter.sol';
+import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 
-
-interface IERC20 {
-  function transfer(address to, uint256 value) external returns (bool);
-  function transferFrom(address from, address to, uint256 value) external returns (bool);
-  function allowance(address owner, address spender) external view returns (uint256);
-  function approve(address spender, uint256 value) external returns (bool);
-}
-
+import {SwappableGasToken} from './structs/SwappableGasToken.sol';
+import {BatchOperation} from './structs/BatchOperation.sol';
+import {ISwapRouter} from './utils/ISwapRouter.sol';
+import {GasParams} from './structs/GasParams.sol';
+import {VaultUser} from './structs/VaultUser.sol';
+import {TxRecord} from './structs/TxRecord.sol';
+import {IERC20} from './utils/IERC20.sol';
 
 
 contract CoreVault is Initializable, ReentrancyGuardUpgradeable {
@@ -31,9 +29,9 @@ contract CoreVault is Initializable, ReentrancyGuardUpgradeable {
 
 
   uint24 public s_uniswapFeeTier; 
-  ISwapRouter public s_uniswapV3Router;  // on Ethereum: 0xE592427A0AEce92De3Edee1F18E0157C05861564
+  ISwapRouter public s_uniswapV3Router; 
 
-  address public s_governance; // GOV_HUB = 0x0000000000000000000000000000000000001006;
+  address public s_governance;
 
   uint public s_scammersGasFactorMilliCores;
   uint public s_fixedTxGasFee;
@@ -127,44 +125,6 @@ contract CoreVault is Initializable, ReentrancyGuardUpgradeable {
   //------------
 
 
-  struct SwappableGasToken {
-    address origToken;
-    address tokenToSwapTo; // non-swappable if tokenToSwapTo = zero
-  }
-
-  struct GasParams {
-    string gasPayerDelegate;
-    bool gasPaymentStartsWithCore;
-    SwappableGasToken[] gasTokens;
-  }
-
-  struct TxRecord {
-    string originName;
-    string fromName;
-    address fromAddress;
-    string toName;
-    address toAddress;
-    bool allowShortCircuit;
-
-    address token;
-    uint amount;
-
-    GasParams gparams;
-  }
-
-  struct VaultUser {
-    uint lastActiveTime;
-    uint numGasdropsLeft;
-    bool isSuspectedScammer;
-  }
-
-  struct BatchOperation {
-    bytes data;
-    uint value;
-  }
-  //------------
-
-
   modifier onlyGovernance() {
     require(msg.sender == s_governance, "op allowed only for governance contract");
     _;
@@ -191,8 +151,9 @@ contract CoreVault is Initializable, ReentrancyGuardUpgradeable {
     revert("cannot pass Core to vault without specifying destination"); 
   }
 
-  //constructor() -> upgradeable contract, can't use
+  //constructor() -> cannot be use in upgradeable contract
 
+  //@initialize
   function initialize(address _gov, address _govDelegate, uint _defaultNumGasdrops, address _uniswapV3Router) external initializer {
     __ReentrancyGuard_init();
     require(_gov != address(0), "missing governance addr");
@@ -689,9 +650,8 @@ contract CoreVault is Initializable, ReentrancyGuardUpgradeable {
   }
 
   function _requireUserNotAlreadyRegistered(string memory username) private view {
-    uint _lastActiveTime = s_activeUsers[username].lastActiveTime;
-    if (_lastActiveTime > 0) {
-      revert UserAlreadyRegistered(username, _lastActiveTime);
+    if (_isActiveUser(username)) {
+      revert UserAlreadyRegistered(username, s_activeUsers[username].lastActiveTime);
     }
   }
 
@@ -758,6 +718,7 @@ contract CoreVault is Initializable, ReentrancyGuardUpgradeable {
     uint _now = block.timestamp;
     s_activeUsers[username] = VaultUser({lastActiveTime: _now, 
                                           numGasdropsLeft: s_numGasdropsForNewcomers, 
+                                          isActiveUser: true,
                                           isSuspectedScammer: false });
   }
 
@@ -824,13 +785,13 @@ contract CoreVault is Initializable, ReentrancyGuardUpgradeable {
   }
 
   function _updateUserTimestamp(string memory _username) private {
-    require(_isActiveUser(_username), "not a user");
+    _requireActiveUser(_username);
     uint _now = block.timestamp;
     s_activeUsers[_username].lastActiveTime = _now;
   }
 
   function _isActiveUser(string memory username) private view returns(bool) {
-    return s_activeUsers[username].lastActiveTime > 0;
+    return s_activeUsers[username].isActiveUser;
   }
 
   function _verifyCanTransferToUser(string memory toUsername) private view {
